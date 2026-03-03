@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create distribution folder
+        run: |
+          mkdir -p dist/molchemist
+          cp -r package/* dist/molchemist/
+
+      - name: Compress dist
+        run: cd dist && zip -r ../molchemist-${{ github.ref_name }}.zip molchemist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: molchemist-${{ github.ref_name }}.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
