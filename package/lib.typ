@@ -1,4 +1,4 @@
-#import "@preview/alchemist:0.1.8": *
+#import "@preview/alchemist:0.1.9": *
 
 #let mol-plugin = plugin("molchemist_plugin.wasm")
 
