@@ -9,7 +9,7 @@ It leverages a blazing-fast Rust/WASM core (powered by [`sdfrust`](https://githu
 Import the `render-mol` function from the package and pass the raw string data of your `.mol` or `.sdf` file.
 
 ```typ
-#import "@preview/molchemist:0.1.0": render-mol
+#import "@preview/molchemist:0.1.1": render-mol
 
 // Read your molecule data
 // Example: https://pubchem.ncbi.nlm.nih.gov/compound/93406
