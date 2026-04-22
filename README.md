@@ -1,20 +1,31 @@
 # molchemist
 
-**molchemist** is a Typst package for rendering chemical structures directly from Molfile (`.mol`) and Structure-Data File (`.sdf`) formats. 
+**molchemist** is a Typst package for rendering chemical structures from Molfile / SDF data and from SMILES strings.
 
-It leverages a blazing-fast Rust/WASM core (powered by [`sdfrust`](https://github.com/hfooladi/sdfrust)) to parse molecular graphs and detect cycles, and seamlessly renders them using the declarative drawing engine of [`alchemist`](https://github.com/Typsium/alchemist).
+It uses a Rust/WASM core to parse molecular graphs and generate `alchemist` ASTs, together with a companion WASM layout plugin for SMILES 2D coordinate generation. Molfile / SDF parsing is powered by [`sdfrust`](https://github.com/hfooladi/sdfrust), SMILES parsing is based on [`opensmiles`](https://crates.io/crates/opensmiles), SMILES 2D coordinate generation uses [`CoordgenLibs`](https://github.com/schrodinger/coordgenlibs), and the final rendering is handled by the declarative drawing engine of [`alchemist`](https://github.com/Typsium/alchemist).
+
+Third-party license notices for redistributed dependencies are collected in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Usage
 
-Import the `render-mol` function from the package and pass the raw string data of your `.mol` or `.sdf` file.
+Import `render-mol` for Molfile/SDF inputs, or `render-smiles` for SMILES inputs.
 
 ```typ
-#import "@preview/molchemist:0.1.1": render-mol
+#import "@preview/molchemist:0.1.1": render-mol, render-smiles
 
 // Read your molecule data
 // Example: https://pubchem.ncbi.nlm.nih.gov/compound/93406
 #let mol-data = read("Structure2D_COMPOUND_CID_93406.sdf")
 ```
+
+For SMILES, `molchemist` generates a 2D layout internally before sending the structure to `alchemist`.
+
+```typ
+// Example: https://pubchem.ncbi.nlm.nih.gov/compound/896
+#render-smiles("CC(=O)NCCC1=CNC2=C1C=C(C=C2)OC", abbreviate: true)
+```
+
+![SMILES Example](package/images/ex06.png)
 
 ### Rendering Modes
 
@@ -103,12 +114,24 @@ When rendering highly complex or dense molecules (e.g., polycyclic compounds, de
     #render-mol(mol-data, config: (atom-sep: 4.5em))
     ```
 
+For SMILES input, the default `render-smiles(...)` mode expands implicit hydrogens into explicit `H` atoms so that `full` mode stays closer to the behavior of `render-mol(...)`. Highly complex or dense molecules can still become visually busy in `full` mode, so `abbreviate: true` or `skeletal: true` will often produce a clearer result. The current implementation also supports tetrahedral `@` / `@@` centers and `/` / `\` double-bond geometry as stereochemical depictions. Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are accepted as well; because the current `alchemist`-based renderer does not have native glyphs for those geometries, they are preserved as stereo annotations below the rendered structure instead of wedge/dash depictions.
+
 ## API Reference
+
+### `render-mol(data, abbreviate: false, skeletal: false, dump: false, config: (:))`
 
 - **`data`** (`str`): The raw string content of a `.mol` or `.sdf` file.
 - **`abbreviate`** (`bool`): If `true`, applies standard chemical abbreviations (e.g., folding H into heteroatoms, labeling terminal CH3). Default is `false`.
 - **`skeletal`** (`bool`): If `true`, renders a pure skeletal structure, overriding `abbreviate`. Hides all backbone C and H atoms. Default is `false`.
 - **`dump`** (`bool`): If `true`, outputs the generated `alchemist` source code as a formatted Typst code block instead of rendering the molecule graphic. Useful for manual tweaking. Default is `false`.
+- **`config`** (`dictionary`): A dictionary of visual styling options passed directly to the `alchemist` package.
+
+### `render-smiles(smiles, abbreviate: false, skeletal: false, dump: false, config: (:))`
+
+- **`smiles`** (`str`): A SMILES string to be parsed, laid out in 2D, and rendered.
+- **`abbreviate`** (`bool`): If `true`, applies standard chemical abbreviations after SMILES parsing and layout generation. Default is `false`.
+- **`skeletal`** (`bool`): If `true`, renders a pure skeletal structure, overriding `abbreviate`. Default is `false`.
+- **`dump`** (`bool`): If `true`, outputs the generated `alchemist` source code as a formatted Typst code block instead of rendering the molecule graphic. Default is `false`.
 - **`config`** (`dictionary`): A dictionary of visual styling options passed directly to the `alchemist` package.
 
 ## License
