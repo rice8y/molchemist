@@ -19,6 +19,7 @@ jobs:
         run: |
           mkdir -p dist/molchemist
           cp -r package/* dist/molchemist/
+          cp LICENSE README.md THIRD_PARTY_NOTICES.md dist/molchemist/
 
       - name: Compress dist
         run: cd dist && zip -r ../molchemist-${{ github.ref_name }}.zip molchemist
