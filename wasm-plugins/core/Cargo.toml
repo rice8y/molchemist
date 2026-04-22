@@ -11,6 +11,7 @@ wasm-minimal-protocol = { git = "https://github.com/astrale-sharp/wasm-minimal-p
 sdfrust = "0.6"
 serde = { version = "1.0.228", features = ["derive"] }
 ciborium = "0.2.2"
+opensmiles = { path = "../vendor/opensmiles" }
 
 [profile.release]
 opt-level = 3

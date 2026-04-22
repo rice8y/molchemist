@@ -47,8 +47,16 @@ install:
     exit 1
   fi
 
+  if [ -f "molchemist_smiles_plugin.wasm" ]; then
+    cp molchemist_smiles_plugin.wasm "$TARGET_DIR"
+  else
+    echo "Warning: molchemist_smiles_plugin.wasm not found in current directory."
+    exit 1
+  fi
+
   [ -f "README.md" ] && cp README.md "$TARGET_DIR"
   [ -f "LICENSE" ] && cp LICENSE "$TARGET_DIR"
+  [ -f "THIRD_PARTY_NOTICES.md" ] && cp THIRD_PARTY_NOTICES.md "$TARGET_DIR"
 
   echo "Package $PACKAGE_NAME version $PACKAGE_VERSION has been installed."
 

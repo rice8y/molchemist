@@ -1,6 +1,7 @@
 #import "@preview/alchemist:0.1.9": *
 
 #let mol-plugin = plugin("molchemist_plugin.wasm")
+#let smiles-plugin = plugin("molchemist_smiles_plugin.wasm")
 
 #let get-b-func(b-type) = {
   if b-type == "double" { double }
@@ -54,7 +55,7 @@
           res += ind + "})\n"
         }
       }
-      
+
     } else if cmd.type == "bond" {
       let offset-str = if "offset" in cmd and cmd.offset != none { ", offset: \"" + cmd.offset + "\"" } else { "" }
       res += ind + cmd.bondType + "(absolute: " + str(cmd.angle) + "deg, atom-sep: base-sep * " + str(cmd.lengthScale) + offset-str + ")\n"
@@ -123,6 +124,21 @@
   }
 }
 
+#let _collect-annotations(cmds) = {
+  let notes = ()
+  for cmd in cmds {
+    if cmd.type == "fragment" and "annotation" in cmd and cmd.annotation != none {
+      let label = if cmd.element != "" { cmd.element } else { cmd.name }
+      notes.push(label + " " + cmd.annotation + " (" + cmd.name + ")")
+    } else if cmd.type == "branch" {
+      for note in _collect-annotations(cmd.body) {
+        notes.push(note)
+      }
+    }
+  }
+  notes
+}
+
 #let render-mol(data, abbreviate: false, skeletal: false, dump: false, config: (:)) = {
   let mode = "full"
   if skeletal {
@@ -141,5 +157,44 @@
     return raw(code, block: true, lang: "typst")
   } else {
     skeletize(config: config, _render-ast(ast, base-sep, config: config))
+  }
+}
+
+#let render-smiles(smiles, abbreviate: false, skeletal: false, dump: false, config: (:)) = {
+  let mode = "full"
+  if skeletal {
+    mode = "skeletal"
+  } else if abbreviate {
+    mode = "abbreviate"
+  }
+
+  let base-sep = config.at("atom-sep", default: 3em)
+  let layout-input = if mode == "full" {
+    mol-plugin.smiles_to_full_layout_input(bytes(smiles))
+  } else {
+    mol-plugin.smiles_to_layout_input(bytes(smiles))
+  }
+  let coords = smiles-plugin.layout_coordinates(layout-input)
+  let cbor-bytes = mol-plugin.smiles_to_ast(bytes(smiles), coords, bytes(mode))
+  let ast = cbor(cbor-bytes)
+
+  if dump {
+    let code = "#let base-sep = " + repr(base-sep) + "\n#skeletize({\n" + _ast-to-alchemist-code(ast, indent: 1) + "})"
+    raw(code, block: true, lang: "typst")
+  } else {
+    let rendered = skeletize(config: config, _render-ast(ast, base-sep, config: config))
+    let annotations = _collect-annotations(ast)
+    if annotations.len() == 0 {
+      rendered
+    } else {
+      stack(
+        dir: ttb,
+        spacing: 0.45em,
+        rendered,
+        text(size: 0.8em, fill: luma(80%))[
+          Stereo annotations: #annotations.join(", ")
+        ],
+      )
+    }
   }
 }
