@@ -18,6 +18,8 @@ Import `render-mol` for Molfile/SDF inputs, or `render-smiles` for SMILES inputs
 #let mol-data = read("Structure2D_COMPOUND_CID_93406.sdf")
 ```
 
+On Typst 0.15.0 and later, you may also pass `path("Structure2D_COMPOUND_CID_93406.sdf")` directly to `render-mol`; `molchemist` will read the file inside the package. The examples in this README use `read(...)` for compatibility with older Typst versions.
+
 The bundled documentation and README screenshots use small PubChem-derived example structures. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source URLs and NCBI data-usage notes.
 
 For SMILES, `molchemist` generates a 2D layout internally before sending the structure to `alchemist`.
@@ -180,7 +182,7 @@ For SMILES input, the default `render-smiles(...)` mode expands implicit hydroge
 
 | Function | Input | Description |
 | --- | --- | --- |
-| `render-mol` | `data: str` | Renders raw Molfile or SDF text. Coordinates are read from the input. |
+| `render-mol` | `data: str`, `bytes`, or Typst 0.15+ `path` | Renders Molfile or SDF data. Coordinates are read from the input. |
 | `render-smiles` | `smiles: str` | Parses SMILES, generates a 2D layout, and renders the result. |
 
 Both renderers accept the same options:
