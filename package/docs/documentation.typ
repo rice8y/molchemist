@@ -82,6 +82,8 @@ Import `molchemist` and choose the renderer that matches your input: @cmd:render
 
 The examples below assume this import unless they need an additional package such as CeTZ.
 
+On Typst 0.15.0 and later, @cmd:render-mol[-] can also receive `path("molecule.sdf")` directly. This manual keeps using `read(...)` in examples for compatibility with older Typst versions.
+
 SMILES is useful for compact inline examples or generated documents. Because SMILES stores connectivity rather than drawing coordinates, `molchemist` first computes a 2D layout and then renders the structure.
 
 #example(```typ
@@ -827,8 +829,8 @@ Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are
 )[
   Render a molecule from raw Molfile or SDF text.
 
-  #argument("data", types: str)[
-    The raw string content of a `.mol` or `.sdf` file.
+  #argument("data", types: (str, bytes, "path"))[
+    Raw `.mol` or `.sdf` data. Typst 0.15.0 and later may pass `path(...)` directly; older versions should pass `read(...)` output.
   ]
 
   #argument("abbreviate", types: bool, default: false)[

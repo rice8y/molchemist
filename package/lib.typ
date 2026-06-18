@@ -679,6 +679,20 @@
   })
 }
 
+#let v15-or-later() = {
+  sys.version >= version(0, 15, 0)
+}
+
+#let _mol-data-to-bytes(data) = {
+  if v15-or-later() and repr(type(data)) == "path" {
+    read(data, encoding: none)
+  } else if type(data) == bytes {
+    data
+  } else {
+    bytes(data)
+  }
+}
+
 #let render-mol(data, abbreviate: false, skeletal: false, dump: false, config: (:), annotations: none, show-indices: false) = {
   let mode = "full"
   if skeletal {
@@ -689,7 +703,7 @@
 
   let base-sep = config.at("atom-sep", default: 3em)
   
-  let cbor-bytes = mol-plugin.sdf_to_ast(bytes(data), bytes(mode))
+  let cbor-bytes = mol-plugin.sdf_to_ast(_mol-data-to-bytes(data), bytes(mode))
   let ast = cbor(cbor-bytes)
   
   if dump {
