@@ -2,13 +2,40 @@
 
 This project redistributes and/or modifies third-party open-source software.
 
+## PubChem example structure data
+
+- Provider: National Center for Biotechnology Information (NCBI), PubChem
+- Policy: NCBI Website and Data Usage Policies and Disclaimers
+- Policy URL: <https://www.ncbi.nlm.nih.gov/home/about/policies/>
+- Local status: redistributed as example/documentation data and rendered README images
+
+The package includes or derives examples from PubChem molecular records:
+
+- `docs/assets/Structure2D_COMPOUND_CID_241.sdf`
+  - PubChem Compound CID 241, benzene
+  - Source: <https://pubchem.ncbi.nlm.nih.gov/compound/241>
+  - Retrieval: <https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/241/SDF?record_type=2d>
+- `docs/assets/Structure2D_COMPOUND_CID_93406.sdf`
+  - PubChem Compound CID 93406
+  - Source: <https://pubchem.ncbi.nlm.nih.gov/compound/93406>
+- `docs/assets/DepositedStructure_SUBSTANCE_SID_93298_Version_3.sdf`
+  - PubChem Substance SID 93298
+  - Source: <https://pubchem.ncbi.nlm.nih.gov/substance/93298>
+- README images in `images/`
+  - Generated from package examples that use PubChem-derived SDF/SMILES inputs,
+    including PubChem CID 93406 and CID 896.
+  - Sources: <https://pubchem.ncbi.nlm.nih.gov/compound/93406>,
+    <https://pubchem.ncbi.nlm.nih.gov/compound/896>
+
+NCBI states that it places no restrictions on the use or distribution of molecular data in its databases. NCBI also notes that some submitted data may carry third-party rights that NCBI cannot assess or transfer. These example files and derived images are therefore attributed to PubChem/NCBI here, but they are not relicensed as part of the `molchemist` MIT license.
+
 ## opensmiles
 
 - Upstream: <https://crates.io/crates/opensmiles>
 - Repository: <https://github.com/Peariforme/bigsmiles-rs>
 - Copyright: Richard
 - License: MIT
-- Local status: vendored and locally patched for `molchemist`
+- Local status: vendored and locally maintained for `molchemist`'s SMILES parser needs. The local copy includes compatibility and bug-fix changes used by this package.
 
 MIT License
 
