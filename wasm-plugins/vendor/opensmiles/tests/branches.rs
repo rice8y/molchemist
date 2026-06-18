@@ -75,6 +75,18 @@ fn parse_branch_with_double_bond() {
 }
 
 #[test]
+fn parse_branch_leading_bond_does_not_leak_to_internal_chain() {
+    // C(=CC=O) should contain C=C-C=O, not C=C=C=O.
+    let molecule = parse("C(=CC=O)").expect("Failed to parse branched enal");
+    let bonds: Vec<_> = molecule.bonds().iter().collect();
+
+    assert_eq!(bonds.len(), 3);
+    assert_eq!(bonds[0].kind(), BondType::Double);
+    assert_eq!(bonds[1].kind(), BondType::Simple);
+    assert_eq!(bonds[2].kind(), BondType::Double);
+}
+
+#[test]
 fn parse_branch_with_triple_bond() {
     // CC(C#N)C = isobutyronitrile
     let molecule = parse("CC(C#N)C").expect("Failed to parse molecule with triple bond in branch");

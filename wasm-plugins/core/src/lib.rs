@@ -22,6 +22,7 @@ enum Command {
     },
     #[serde(rename = "bond")]
     Bond {
+        name: String,
         #[serde(rename = "bondType")]
         bond_type: String,
         angle: f64,
@@ -36,6 +37,7 @@ enum Command {
 #[derive(Serialize)]
 struct LinkData {
     target: String,
+    name: String,
     #[serde(rename = "bondType")]
     bond_type: String,
     angle: f64,
@@ -932,16 +934,12 @@ fn calculate_double_bond_offset(
     mol: &RenderMol,
     rings: &[Vec<usize>],
 ) -> Option<String> {
-    let ring = rings.iter().find(|ring| ring.contains(&u) && ring.contains(&v))?;
+    let ring = rings
+        .iter()
+        .filter(|ring| ring_contains_edge(ring, u, v))
+        .min_by_key(|ring| ring.len())?;
 
-    let mut cx = 0.0;
-    let mut cy = 0.0;
-    for &node in ring {
-        cx += mol.atoms[node].x;
-        cy += mol.atoms[node].y;
-    }
-    cx /= ring.len() as f64;
-    cy /= ring.len() as f64;
+    let (cx, cy) = ring_centroid(ring, mol);
 
     let a = &mol.atoms[u];
     let b = &mol.atoms[v];
@@ -952,6 +950,48 @@ fn calculate_double_bond_offset(
     let cross = dx * cy_dir - dy * cx_dir;
 
     Some(if cross > 0.0 { "left" } else { "right" }.to_string())
+}
+
+fn ring_contains_edge(ring: &[usize], u: usize, v: usize) -> bool {
+    ring.iter().enumerate().any(|(idx, &node)| {
+        let next = ring[(idx + 1) % ring.len()];
+        (node == u && next == v) || (node == v && next == u)
+    })
+}
+
+fn ring_centroid(ring: &[usize], mol: &RenderMol) -> (f64, f64) {
+    if ring.len() < 3 {
+        return average_ring_center(ring, mol);
+    }
+
+    let mut twice_area = 0.0;
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+
+    for idx in 0..ring.len() {
+        let a = &mol.atoms[ring[idx]];
+        let b = &mol.atoms[ring[(idx + 1) % ring.len()]];
+        let cross = a.x * b.y - b.x * a.y;
+        twice_area += cross;
+        cx += (a.x + b.x) * cross;
+        cy += (a.y + b.y) * cross;
+    }
+
+    if twice_area.abs() < 1e-9 {
+        return average_ring_center(ring, mol);
+    }
+
+    (cx / (3.0 * twice_area), cy / (3.0 * twice_area))
+}
+
+fn average_ring_center(ring: &[usize], mol: &RenderMol) -> (f64, f64) {
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    for &node in ring {
+        cx += mol.atoms[node].x;
+        cy += mol.atoms[node].y;
+    }
+    (cx / ring.len() as f64, cy / ring.len() as f64)
 }
 
 fn calc_angle(u: &RenderAtom, v: &RenderAtom) -> f64 {
@@ -1037,6 +1077,7 @@ fn dfs(
         };
         links.push(LinkData {
             target: format!("a{v}"),
+            name: format!("b{bond_idx}"),
             bond_type: bond_func_name(kind, u, v, stereo_map).to_string(),
             angle: calc_angle(u_atom, &mol.atoms[v]),
             offset,
@@ -1075,6 +1116,7 @@ fn dfs(
         };
 
         let bond_cmd = Command::Bond {
+            name: format!("b{bond_idx}"),
             bond_type: bond_func_name(kind, u, v, stereo_map).to_string(),
             angle: calc_angle(u_atom, &mol.atoms[v]),
             offset,
@@ -1262,6 +1304,16 @@ mod tests {
     }
 
     #[test]
+    fn branch_leading_bond_type_does_not_leak_into_smiles_layout() {
+        let payload = smiles_to_layout_input(b"C(=CC=O)C=C(C(=O)O)N").unwrap();
+        let (_, bonds, _, _) = decode_layout_input(&payload);
+
+        assert_eq!(bonds[0], (0, 1, 2));
+        assert_eq!(bonds[1], (1, 2, 1));
+        assert_eq!(bonds[2], (2, 3, 2));
+    }
+
+    #[test]
     fn smiles_abbreviate_mode_uses_folded_hydrogen_labels() {
         let mut coords = Vec::new();
         coords.extend_from_slice(COORD_MAGIC);
@@ -1345,6 +1397,41 @@ mod tests {
                 "H".to_string(),
                 "O".to_string(),
             ]
+        );
+    }
+
+    fn test_atom(element: &str, x: f64, y: f64) -> RenderAtom {
+        RenderAtom {
+            element: element.to_string(),
+            x,
+            y,
+            hydrogens: 0,
+            charge: 0,
+            stereo_annotation: None,
+        }
+    }
+
+    #[test]
+    fn double_bond_offset_uses_ring_where_bond_is_an_edge() {
+        let mol = RenderMol {
+            atoms: vec![
+                test_atom("C", 0.0, 0.0),
+                test_atom("C", 1.0, 0.0),
+                test_atom("C", 1.0, 1.0),
+                test_atom("C", 0.0, 1.0),
+                test_atom("C", 0.5, -1.0),
+                test_atom("C", -0.5, -1.0),
+            ],
+            bonds: Vec::new(),
+        };
+        let rings = vec![
+            vec![0, 4, 1, 5],
+            vec![0, 1, 2, 3],
+        ];
+
+        assert_eq!(
+            calculate_double_bond_offset(0, 1, &mol, &rings).as_deref(),
+            Some("left")
         );
     }
 

@@ -113,6 +113,7 @@ impl<'a> Parser<'a> {
                 self.next_bond_type = Some(BondType::try_from(&c)?);
                 if self.builder.nodes().is_empty() {
                     self.branch_bond_type = self.next_bond_type;
+                    self.next_bond_type = None;
                 }
 
             // Branches
