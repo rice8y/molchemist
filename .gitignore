@@ -1,3 +1,6 @@
 target
 *.lock
 dev
+test-results/
+artifacts/
+push.sh
