@@ -5,3 +5,10 @@ dev
 test-results/
 artifacts/
 push.sh
+.bin/
+.cache/
+.typage/
+public/
+molchemist-docs/
+.vercel
+.env*
