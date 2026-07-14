@@ -32,10 +32,8 @@ The package includes or derives examples from PubChem molecular records:
   - PubChem Substance SID 93298
   - Source: <https://pubchem.ncbi.nlm.nih.gov/substance/93298>
 - README images in `images/`
-  - Generated from package examples that use PubChem-derived SDF/SMILES inputs,
-    including PubChem CID 93406 and CID 896.
-  - Sources: <https://pubchem.ncbi.nlm.nih.gov/compound/93406>,
-    <https://pubchem.ncbi.nlm.nih.gov/compound/896>
+  - Generated from package examples that use PubChem-derived SDF/SMILES inputs, including PubChem CID 93406 and CID 896.
+  - Sources: <https://pubchem.ncbi.nlm.nih.gov/compound/93406>, <https://pubchem.ncbi.nlm.nih.gov/compound/896>
 
 NCBI states that it places no restrictions on the use or distribution of molecular data in its databases. NCBI also notes that some submitted data may carry third-party rights that NCBI cannot assess or transfer. These example files and derived images are therefore attributed to PubChem/NCBI here, but they are not relicensed as part of the `molchemist` MIT license.
 
@@ -108,11 +106,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Emscripten system runtime
 
-`molchemist_smiles_plugin.wasm` was linked with Emscripten 5.0.5 and may
-incorporate Emscripten, musl, libc++, and libc++abi runtime code. The exact
-license texts shipped with that toolchain are redistributed with the package.
-Emscripten's MIT option and musl's MIT terms are used here; libc++ and
-libc++abi are used under Apache-2.0 with LLVM-exception:
+`molchemist_smiles_plugin.wasm` was linked with Emscripten 5.0.5 and may incorporate Emscripten, musl, libc++, and libc++abi runtime code. The exact license texts shipped with that toolchain are redistributed with the package. Emscripten's MIT option and musl's MIT terms are used here; libc++ and libc++abi are used under Apache-2.0 with LLVM-exception:
 
 - `LICENSE-EMSCRIPTEN`
 - `LICENSE-MUSL`
@@ -151,15 +145,9 @@ SOFTWARE.
 
 ## Embedded Rust support libraries
 
-`molchemist_plugin.wasm` also contains code from `ciborium`, `ciborium-io`,
-`ciborium-ll`, `half`, `cfg-if`, `zerocopy`, `serde`, `serde_core`, and
-`thiserror`. `ciborium` is Apache-2.0 licensed; the other listed projects offer
-Apache-2.0 as one of their license choices. They are redistributed here under
-those Apache-2.0 terms.
+`molchemist_plugin.wasm` also contains code from `ciborium`, `ciborium-io`, `ciborium-ll`, `half`, `cfg-if`, `zerocopy`, `serde`, `serde_core`, and `thiserror`. `ciborium` is Apache-2.0 licensed; the other listed projects offer Apache-2.0 as one of their license choices. They are redistributed here under those Apache-2.0 terms.
 
-The Rust-built plugin may also contain portions of the Rust standard library,
-which is available under MIT or Apache-2.0 terms and is used here under
-Apache-2.0.
+The Rust-built plugin may also contain portions of the Rust standard library, which is available under MIT or Apache-2.0 terms and is used here under Apache-2.0.
 
 - License text: `LICENSE-APACHE-2.0`
 

@@ -10,8 +10,7 @@ It exposes the shared `molchemist-core` engine through Typst's minimal plugin pr
 - converting molecule graphs into the CBOR AST consumed by the Typst package
 - formatting the same graphs as editable Alchemist source
 
-The parsing and formatting implementation is in `../../crates/molchemist-core`.
-This crate deliberately stays a small ABI wrapper so the Typst package and CLI cannot drift into separate conversion implementations.
+The parsing and formatting implementation is in `../../crates/molchemist-core`. This crate deliberately stays a small ABI wrapper so the Typst package and CLI cannot drift into separate conversion implementations.
 
 Build from the repository root with:
 

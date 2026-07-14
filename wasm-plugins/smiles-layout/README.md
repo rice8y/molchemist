@@ -6,8 +6,7 @@ Its role is intentionally small:
 
 `SMILES (parsed in Rust) -> atom/bond payload -> CoordgenLibs -> 2D coordinates`
 
-The Rust plugin in `../core` handles OpenSMILES parsing, aromatic bond kekulization, and AST generation.
-This plugin only reads the compact layout payload, runs CoordgenLibs, and returns packed 2D coordinates.
+The Rust plugin in `../core` handles OpenSMILES parsing, aromatic bond kekulization, and AST generation. This plugin only reads the compact layout payload, runs CoordgenLibs, and returns packed 2D coordinates.
 
 ## Build notes
 

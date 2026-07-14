@@ -1,7 +1,6 @@
 # WASM Plugins
 
-This directory contains the thin WebAssembly adapters used by `molchemist`.
-Shared conversion code and vendored chemistry dependencies live in `../crates/molchemist-core`.
+This directory contains the thin WebAssembly adapters used by `molchemist`. Shared conversion code and vendored chemistry dependencies live in `../crates/molchemist-core`.
 
 ## Layout
 

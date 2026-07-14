@@ -35,10 +35,8 @@ The repository includes or derives examples from PubChem molecular records:
   - PubChem Substance SID 93298
   - Source: <https://pubchem.ncbi.nlm.nih.gov/substance/93298>
 - README images in `package/images/`
-  - Generated from package examples that use PubChem-derived SDF/SMILES inputs,
-    including PubChem CID 93406 and CID 896.
-  - Sources: <https://pubchem.ncbi.nlm.nih.gov/compound/93406>,
-    <https://pubchem.ncbi.nlm.nih.gov/compound/896>
+  - Generated from package examples that use PubChem-derived SDF/SMILES inputs, including PubChem CID 93406 and CID 896.
+  - Sources: <https://pubchem.ncbi.nlm.nih.gov/compound/93406>, <https://pubchem.ncbi.nlm.nih.gov/compound/896>
 
 NCBI states that it places no restrictions on the use or distribution of molecular data in its databases. NCBI also notes that some submitted data may carry third-party rights that NCBI cannot assess or transfer. These example files and derived images are therefore attributed to PubChem/NCBI here, but they are not relicensed as part of the `molchemist` MIT license.
 

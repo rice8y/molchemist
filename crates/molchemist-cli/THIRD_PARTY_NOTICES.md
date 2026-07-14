@@ -4,22 +4,14 @@ This project redistributes and/or modifies third-party open-source software.
 
 ## License scope
 
-The crate metadata uses the aggregate SPDX expression `MIT AND BSD-3-Clause
-AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)`.
+The crate metadata uses the aggregate SPDX expression `MIT AND BSD-3-Clause AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)`.
 
 - Molchemist-authored CLI source is MIT-licensed.
-- `src/runtime.rs` adapts Typst's WebAssembly plugin host and is
-  Apache-2.0-licensed.
-- `wasm/molchemist_plugin.wasm` combines MIT- and Apache-2.0-licensed
-  components. It also incorporates `wasm-minimal-protocol`, released under the
-  Unlicense.
-- `wasm/molchemist_smiles_plugin.wasm` combines MIT-, BSD-3-Clause-, and
-  Apache-2.0-with-LLVM-exception components.
+- `src/runtime.rs` adapts Typst's WebAssembly plugin host and is Apache-2.0-licensed.
+- `wasm/molchemist_plugin.wasm` combines MIT- and Apache-2.0-licensed components. It also incorporates `wasm-minimal-protocol`, released under the Unlicense.
+- `wasm/molchemist_smiles_plugin.wasm` combines MIT-, BSD-3-Clause-, and Apache-2.0-with-LLVM-exception components.
 
-`LICENSE` contains the MIT terms for molchemist-authored code. The other
-license files and the notices below apply only to the corresponding third-party
-portions. The Unlicense is documented for transparency but omitted from the
-aggregate Cargo expression because it imposes no redistribution conditions.
+`LICENSE` contains the MIT terms for molchemist-authored code. The other license files and the notices below apply only to the corresponding third-party portions. The Unlicense is documented for transparency but omitted from the aggregate Cargo expression because it imposes no redistribution conditions.
 
 ## PubChem example structure data
 
@@ -108,11 +100,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Emscripten system runtime
 
-The embedded `molchemist_smiles_plugin.wasm` was linked with Emscripten 5.0.5
-and may incorporate Emscripten, musl, libc++, and libc++abi runtime code. The
-exact license texts shipped with that toolchain are redistributed with the
-crate. Emscripten's MIT option and musl's MIT terms are used here; libc++ and
-libc++abi are used under Apache-2.0 with LLVM-exception:
+The embedded `molchemist_smiles_plugin.wasm` was linked with Emscripten 5.0.5 and may incorporate Emscripten, musl, libc++, and libc++abi runtime code. The exact license texts shipped with that toolchain are redistributed with the crate. Emscripten's MIT option and musl's MIT terms are used here; libc++ and libc++abi are used under Apache-2.0 with LLVM-exception:
 
 - `LICENSE-EMSCRIPTEN`
 - `LICENSE-MUSL`
@@ -151,15 +139,9 @@ SOFTWARE.
 
 ## Embedded Rust support libraries
 
-`molchemist_plugin.wasm` also contains code from `ciborium`, `ciborium-io`,
-`ciborium-ll`, `half`, `cfg-if`, `zerocopy`, `serde`, `serde_core`, and
-`thiserror`. `ciborium` is Apache-2.0 licensed; the other listed projects offer
-Apache-2.0 as one of their license choices. They are redistributed here under
-those Apache-2.0 terms.
+`molchemist_plugin.wasm` also contains code from `ciborium`, `ciborium-io`, `ciborium-ll`, `half`, `cfg-if`, `zerocopy`, `serde`, `serde_core`, and `thiserror`. `ciborium` is Apache-2.0 licensed; the other listed projects offer Apache-2.0 as one of their license choices. They are redistributed here under those Apache-2.0 terms.
 
-The Rust-built plugin may also contain portions of the Rust standard library,
-which is available under MIT or Apache-2.0 terms and is used here under
-Apache-2.0.
+The Rust-built plugin may also contain portions of the Rust standard library, which is available under MIT or Apache-2.0 terms and is used here under Apache-2.0.
 
 - License text: `LICENSE-APACHE-2.0`
 
@@ -193,12 +175,10 @@ For more information, please refer to <https://unlicense.org>.
 
 ## Typst plugin host
 
-The `molchemist-cli` WebAssembly host follows and adapts the plugin runtime in
-Typst 0.15.0.
+The `molchemist-cli` WebAssembly host follows and adapts the plugin runtime in Typst 0.15.0.
 
 - Upstream: <https://github.com/typst/typst>
 - License: Apache-2.0
 - License text: `LICENSE-APACHE-2.0`
 
-The CLI also uses `wasmi` and `clap` through Cargo. Their source packages and
-license metadata are resolved by Cargo; both offer MIT and Apache-2.0 terms.
+The CLI also uses `wasmi` and `clap` through Cargo. Their source packages and license metadata are resolved by Cargo; both offer MIT and Apache-2.0 terms.
