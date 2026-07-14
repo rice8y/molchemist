@@ -722,12 +722,12 @@
   })
 }
 
-#let v15-or-later() = {
+#let _v15-or-later() = {
   sys.version >= version(0, 15, 0)
 }
 
 #let _mol-data-to-bytes(data) = {
-  if v15-or-later() and repr(type(data)) == "path" {
+  if _v15-or-later() and repr(type(data)) == "path" {
     read(data, encoding: none)
   } else if type(data) == bytes {
     data
