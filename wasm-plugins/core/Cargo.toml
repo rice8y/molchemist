@@ -2,19 +2,11 @@
 name = "molchemist_plugin"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
 wasm-minimal-protocol = { git = "https://github.com/astrale-sharp/wasm-minimal-protocol" }
-sdfrust = "0.6"
-serde = { version = "1.0.228", features = ["derive"] }
-ciborium = "0.2.2"
-opensmiles = { path = "../vendor/opensmiles" }
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
+molchemist-core = { path = "../../crates/molchemist-core" }

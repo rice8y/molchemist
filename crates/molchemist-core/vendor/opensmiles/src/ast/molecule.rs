@@ -165,7 +165,7 @@ fn compute_suppress_stereo_bonds(
 /// # Example
 ///
 /// ```
-/// use opensmiles::parse;
+/// use molchemist_core::parse;
 ///
 /// let mol = parse("CCO").unwrap();
 /// assert_eq!(mol.nodes().len(), 3); // C, C, O

@@ -26,5 +26,5 @@ The local copy is intentionally maintained for `molchemist` and is not treated a
 - Regression:
   - `parse_branch_leading_bond_does_not_leak_to_internal_chain` asserts that `C(=CC=O)` parses as double, single, double.
 - Verification:
-  - From `wasm-plugins/vendor/opensmiles`: `cargo test --test branches parse_branch_leading_bond_does_not_leak_to_internal_chain -- --nocapture`
-  - From `wasm-plugins/core`: `cargo test branch_leading_bond_type_does_not_leak_into_smiles_layout -- --nocapture`
+  - From the repository root: `cargo test --manifest-path crates/molchemist-core/vendor/opensmiles/Cargo.toml --test branches parse_branch_leading_bond_does_not_leak_to_internal_chain -- --nocapture`
+  - From the repository root: `cargo test -p molchemist-core branch_leading_bond_type_does_not_leak_into_smiles_layout -- --nocapture`

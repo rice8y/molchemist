@@ -14,63 +14,6 @@
   else { single }
 }
 
-#let _ast-to-alchemist-code(cmds, indent: 1) = {
-  let ind = "  " * indent
-  let res = ""
-  for cmd in cmds {
-    if cmd.type == "fragment" {
-      let f-args-str = ""
-      
-      if cmd.name != "" {
-        f-args-str += "name: \"" + cmd.name + "\""
-      }
-
-      let links-str = ""
-      if cmd.links.len() > 0 {
-        links-str += "links: (\n"
-        for l in cmd.links {
-           let offset-str = if "offset" in l and l.offset != none { ", offset: \"" + l.offset + "\"" } else { "" }
-           let name-str = if "name" in l and l.name != "" { ", name: \"" + l.name + "\"" } else { "" }
-           links-str += ind + "  \"" + l.target + "\": " + l.bondType + "(absolute: " + str(l.angle) + "deg, atom-sep: base-sep * " + str(l.lengthScale) + offset-str + name-str + "),\n"
-        }
-        links-str += ind + ")"
-      }
-
-      if cmd.element != "" {
-        if links-str != "" {
-          if f-args-str != "" { f-args-str += ", " }
-          f-args-str += links-str
-        }
-        let elem-str = "\"" + cmd.element + "\""
-        if f-args-str != "" {
-          res += ind + "fragment(" + elem-str + ", " + f-args-str + ")\n"
-        } else {
-          res += ind + "fragment(" + elem-str + ")\n"
-        }
-      } else {
-        if cmd.name != "" {
-          res += ind + "hook(\"" + cmd.name + "\")\n"
-        }
-        if links-str != "" {
-          res += ind + "branch({\n"
-          res += ind + "  single(absolute: 0deg, atom-sep: 0pt, stroke: none, name: \"" + cmd.name + "-links\", " + links-str + ")\n"
-          res += ind + "})\n"
-        }
-      }
-
-    } else if cmd.type == "bond" {
-      let offset-str = if "offset" in cmd and cmd.offset != none { ", offset: \"" + cmd.offset + "\"" } else { "" }
-      let name-str = if "name" in cmd and cmd.name != "" { ", name: \"" + cmd.name + "\"" } else { "" }
-      res += ind + cmd.bondType + "(absolute: " + str(cmd.angle) + "deg, atom-sep: base-sep * " + str(cmd.lengthScale) + offset-str + name-str + ")\n"
-    } else if cmd.type == "branch" {
-      res += ind + "branch({\n"
-      res += _ast-to-alchemist-code(cmd.body, indent: indent + 1)
-      res += ind + "})\n"
-    }
-  }
-  return res
-}
-
 #let _render-ast(cmds, base-sep, config: (:)) = {
   for cmd in cmds {
     if cmd.type == "fragment" {
@@ -276,9 +219,13 @@
 )
 
 #let atom-ref(index) = _structure-name + ".a" + str(index)
+
 #let atom-anchor(index, anchor: "mid") = (kind: "atom", index: index, anchor: anchor)
+
 #let bond-ref(index) = _structure-name + ".b" + str(index)
+
 #let bond-anchor(index, anchor: "50%") = (kind: "bond", index: index, anchor: anchor)
+
 #let molecule-anchor(anchor: "center") = (kind: "molecule", anchor: anchor)
 
 #let _normalized-annotations(annotations) = {
@@ -702,14 +649,13 @@
   }
 
   let base-sep = config.at("atom-sep", default: 3em)
-  
-  let cbor-bytes = mol-plugin.sdf_to_ast(_mol-data-to-bytes(data), bytes(mode))
-  let ast = cbor(cbor-bytes)
-  
+  let mol-data = _mol-data-to-bytes(data)
+
   if dump {
-    let code = "#let base-sep = " + repr(base-sep) + "\n#skeletize({\n" + _ast-to-alchemist-code(ast, indent: 1) + "})"
+    let code = str(mol-plugin.sdf_to_code(mol-data, bytes(mode), bytes(repr(base-sep)), bytes("2")))
     return raw(code, block: true, lang: "typst")
   } else {
+    let ast = cbor(mol-plugin.sdf_to_ast(mol-data, bytes(mode)))
     _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
   }
 }
@@ -729,13 +675,12 @@
     mol-plugin.smiles_to_layout_input(bytes(smiles))
   }
   let coords = smiles-plugin.layout_coordinates(layout-input)
-  let cbor-bytes = mol-plugin.smiles_to_ast(bytes(smiles), coords, bytes(mode))
-  let ast = cbor(cbor-bytes)
 
   if dump {
-    let code = "#let base-sep = " + repr(base-sep) + "\n#skeletize({\n" + _ast-to-alchemist-code(ast, indent: 1) + "})"
+    let code = str(mol-plugin.smiles_to_code(bytes(smiles), coords, bytes(mode), bytes(repr(base-sep)), bytes("2")))
     raw(code, block: true, lang: "typst")
   } else {
+    let ast = cbor(mol-plugin.smiles_to_ast(bytes(smiles), coords, bytes(mode)))
     let rendered = _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
     let annotations = _collect-annotations(ast)
     if annotations.len() == 0 {

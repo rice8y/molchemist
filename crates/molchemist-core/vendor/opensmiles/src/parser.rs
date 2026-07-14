@@ -747,7 +747,7 @@ impl<'a> Parser<'a> {
 /// # Examples
 ///
 /// ```
-/// use opensmiles::parse;
+/// use molchemist_core::parse;
 ///
 /// let ethanol = parse("CCO").unwrap();
 /// let benzene = parse("c1ccccc1").unwrap();

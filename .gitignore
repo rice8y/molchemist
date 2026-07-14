@@ -1,5 +1,6 @@
 target
 *.lock
+!/Cargo.lock
 dev
 test-results/
 artifacts/
