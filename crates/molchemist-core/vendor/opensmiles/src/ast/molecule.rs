@@ -442,7 +442,6 @@ impl Molecule {
     }
 
     fn build_spanning_tree_inner(
-        &self,
         current: NodeIndex,
         parent: Option<NodeIndex>,
         state: &mut SpanningTreeState,
@@ -474,7 +473,7 @@ impl Molecule {
                 }
             } else {
                 state.tree_children[current as usize].push((voisin, bond_type));
-                self.build_spanning_tree_inner(voisin, Some(current), state);
+                Self::build_spanning_tree_inner(voisin, Some(current), state);
             }
         }
 
@@ -500,7 +499,7 @@ impl Molecule {
             tree_children: &mut tree_children,
             ring_digits: &mut ring_pair_ids,
         };
-        self.build_spanning_tree_inner(start, None, &mut state);
+        Self::build_spanning_tree_inner(start, None, &mut state);
 
         (tree_children, ring_pair_ids)
     }

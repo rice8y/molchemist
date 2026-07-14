@@ -1,6 +1,6 @@
 # Local Patches for molchemist
 
-This directory contains a vendored copy of `opensmiles` used by `molchemist`. 
+This directory contains a vendored copy of `opensmiles` used by `molchemist`.
 The local copy is intentionally maintained for `molchemist` and is not treated as a temporary patch queue waiting for upstream synchronization.
 
 ## Policy
@@ -28,3 +28,11 @@ The local copy is intentionally maintained for `molchemist` and is not treated a
 - Verification:
   - From the repository root: `cargo test --manifest-path crates/molchemist-core/vendor/opensmiles/Cargo.toml --test branches parse_branch_leading_bond_does_not_leak_to_internal_chain -- --nocapture`
   - From the repository root: `cargo test -p molchemist-core branch_leading_bond_type_does_not_leak_into_smiles_layout -- --nocapture`
+
+### Keep the spanning-tree helper independent of `Molecule`
+
+- File: `src/ast/molecule.rs`
+- Reason: The recursive helper operates entirely on its `SpanningTreeState` argument and does not read the `Molecule` instance.
+- Local change: Remove the unused `&self` receiver and call the helper as an associated function. This keeps strict workspace Clippy checks clean without suppressing `clippy::only_used_in_recursion`.
+- Behavior: No parsing or canonicalization behavior changes.
+- Verification: From the repository root: `cargo clippy --workspace --all-targets -- -D warnings`
