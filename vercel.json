@@ -5,6 +5,6 @@
   },
   "installCommand": "bash scripts/vercel-install.sh",
   "buildCommand": "bash scripts/vercel-build.sh",
-  "outputDirectory": "molfig-docs/public",
+  "outputDirectory": "molchemist-docs/public",
   "cleanUrls": true
 }
