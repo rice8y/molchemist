@@ -1,3 +1,7 @@
+/// Render chemical structures from Molfile, SDF, and SMILES inputs.
+///
+/// The public API provides molecule renderers, annotation builders, and anchor
+/// helpers for publication-oriented chemical figures.
 #import "@preview/alchemist:0.2.0": *
 
 #let mol-plugin = plugin("molchemist_plugin.wasm")
@@ -12,63 +16,6 @@
   else if b-type == "cram-dashed-right" { cram-dashed-right }
   else if b-type == "cram-dashed-left" { cram-dashed-left }
   else { single }
-}
-
-#let _ast-to-alchemist-code(cmds, indent: 1) = {
-  let ind = "  " * indent
-  let res = ""
-  for cmd in cmds {
-    if cmd.type == "fragment" {
-      let f-args-str = ""
-      
-      if cmd.name != "" {
-        f-args-str += "name: \"" + cmd.name + "\""
-      }
-
-      let links-str = ""
-      if cmd.links.len() > 0 {
-        links-str += "links: (\n"
-        for l in cmd.links {
-           let offset-str = if "offset" in l and l.offset != none { ", offset: \"" + l.offset + "\"" } else { "" }
-           let name-str = if "name" in l and l.name != "" { ", name: \"" + l.name + "\"" } else { "" }
-           links-str += ind + "  \"" + l.target + "\": " + l.bondType + "(absolute: " + str(l.angle) + "deg, atom-sep: base-sep * " + str(l.lengthScale) + offset-str + name-str + "),\n"
-        }
-        links-str += ind + ")"
-      }
-
-      if cmd.element != "" {
-        if links-str != "" {
-          if f-args-str != "" { f-args-str += ", " }
-          f-args-str += links-str
-        }
-        let elem-str = "\"" + cmd.element + "\""
-        if f-args-str != "" {
-          res += ind + "fragment(" + elem-str + ", " + f-args-str + ")\n"
-        } else {
-          res += ind + "fragment(" + elem-str + ")\n"
-        }
-      } else {
-        if cmd.name != "" {
-          res += ind + "hook(\"" + cmd.name + "\")\n"
-        }
-        if links-str != "" {
-          res += ind + "branch({\n"
-          res += ind + "  single(absolute: 0deg, atom-sep: 0pt, stroke: none, name: \"" + cmd.name + "-links\", " + links-str + ")\n"
-          res += ind + "})\n"
-        }
-      }
-
-    } else if cmd.type == "bond" {
-      let offset-str = if "offset" in cmd and cmd.offset != none { ", offset: \"" + cmd.offset + "\"" } else { "" }
-      let name-str = if "name" in cmd and cmd.name != "" { ", name: \"" + cmd.name + "\"" } else { "" }
-      res += ind + cmd.bondType + "(absolute: " + str(cmd.angle) + "deg, atom-sep: base-sep * " + str(cmd.lengthScale) + offset-str + name-str + ")\n"
-    } else if cmd.type == "branch" {
-      res += ind + "branch({\n"
-      res += _ast-to-alchemist-code(cmd.body, indent: indent + 1)
-      res += ind + "})\n"
-    }
-  }
-  return res
 }
 
 #let _render-ast(cmds, base-sep, config: (:)) = {
@@ -148,6 +95,25 @@
   notes
 }
 
+/// Create a free arrow overlay drawn after the molecule.
+///
+/// - from (any): Source anchor or CeTZ coordinate.
+/// - to (any): Destination anchor or CeTZ coordinate.
+/// - label (content, none): Optional content placed near the arrow midpoint.
+/// - from-anchor (str): Anchor used when `from` is a named object.
+/// - to-anchor (str): Anchor used when `to` is a named object.
+/// - label-anchor (str): CeTZ anchor used to place the label.
+/// - label-offset (array): Relative label offset from the arrow midpoint.
+/// - mark (any): CeTZ line mark configuration.
+/// - stroke (any): CeTZ stroke configuration.
+/// - boxed (bool): Whether to draw a background box around the label.
+/// - label-size (length): Label text size.
+/// - label-fill (any): Label box fill.
+/// - label-stroke (any): Label box stroke.
+/// - label-inset (any): Label box inset.
+/// - label-radius (length): Label box corner radius.
+/// - name (str, none): Optional CeTZ object name.
+/// -> dictionary
 #let arrow-annotation(
   from,
   to,
@@ -185,6 +151,21 @@
   name: name,
 )
 
+/// Create a free text label without a leader line.
+///
+/// - at (any): Target anchor or CeTZ coordinate.
+/// - label (content): Label content.
+/// - anchor (str): Anchor used to resolve `at`.
+/// - label-anchor (str): CeTZ anchor used to place the label.
+/// - offset (array): Relative offset from the target.
+/// - boxed (bool): Whether to draw a background box around the label.
+/// - label-size (length): Label text size.
+/// - label-fill (any): Label box fill.
+/// - label-stroke (any): Label box stroke.
+/// - label-inset (any): Label box inset.
+/// - label-radius (length): Label box corner radius.
+/// - name (str, none): Optional CeTZ object name.
+/// -> dictionary
 #let label-annotation(
   at,
   label,
@@ -214,6 +195,37 @@
   name: name,
 )
 
+/// Create an external publication-style label with a leader line.
+///
+/// Automatic placement uses `side`; explicit CeTZ coordinates can override the
+/// label and either end of the leader for final figure adjustments.
+///
+/// - at (any): Target anchor or CeTZ coordinate.
+/// - label (content): Label content.
+/// - anchor (str): Anchor used to resolve `at`.
+/// - side (str): Placement preset: `"east"`, `"west"`, `"north"`, `"south"`, or a diagonal combination.
+/// - label-at (auto, dictionary, str, array): Explicit label coordinate, or `auto`.
+/// - label-offset (auto, array): Relative label offset used by automatic placement.
+/// - target-offset (auto, array): Relative endpoint offset from the target.
+/// - target-gap (int, float): Automatic clearance between the leader and target.
+/// - label-anchor (auto, str): CeTZ anchor for the label content.
+/// - leader (str): Leader style: `"curve"`, `"straight"`, or `"elbow"`.
+/// - leader-start (auto, dictionary, str, array): Explicit leader start coordinate.
+/// - leader-end (auto, dictionary, str, array): Explicit leader end coordinate.
+/// - leader-points (array): Intermediate CeTZ coordinates for routing the leader.
+/// - leader-start-offset (array): Fine adjustment applied to the leader start.
+/// - leader-end-offset (array): Fine adjustment applied to the leader end.
+/// - mark (any): Optional CeTZ line mark configuration.
+/// - stroke (any): CeTZ stroke configuration for the leader.
+/// - label-size (length): Label text size.
+/// - label-gap (int, float): Clearance between an unboxed label and its leader.
+/// - label-inset (any): Label box inset.
+/// - label-radius (length): Label box corner radius.
+/// - label-fill (any): Label box fill.
+/// - label-stroke (any): Label box stroke.
+/// - boxed (bool): Whether to draw a background box around the label.
+/// - name (str, none): Optional CeTZ object name.
+/// -> dictionary
 #let callout-annotation(
   at,
   label,
@@ -269,16 +281,47 @@
   name: name,
 )
 
+/// Create an annotation that runs custom CeTZ drawing code.
+///
+/// - body (function): Function receiving the generated molecule group name.
+/// - name (str, none): Optional annotation name retained in the descriptor.
+/// -> dictionary
 #let cetz-annotation(body, name: none) = (
   type: "cetz",
   body: body,
   name: name,
 )
 
+/// Return the internal CeTZ object name for an atom.
+///
+/// - index (int): Atom index shown by `show-indices`.
+/// -> str
 #let atom-ref(index) = _structure-name + ".a" + str(index)
+
+/// Select an anchor on a rendered atom.
+///
+/// - index (int): Atom index shown by `show-indices`.
+/// - anchor (str): CeTZ anchor such as `"mid"`, `"north"`, or `"east"`.
+/// -> dictionary
 #let atom-anchor(index, anchor: "mid") = (kind: "atom", index: index, anchor: anchor)
+
+/// Return the internal CeTZ object name for a bond.
+///
+/// - index (int): Bond index shown by `show-indices`.
+/// -> str
 #let bond-ref(index) = _structure-name + ".b" + str(index)
+
+/// Select an anchor on a rendered bond.
+///
+/// - index (int): Bond index shown by `show-indices`.
+/// - anchor (str): CeTZ path anchor, such as `"50%"`.
+/// -> dictionary
 #let bond-anchor(index, anchor: "50%") = (kind: "bond", index: index, anchor: anchor)
+
+/// Select an anchor on the complete rendered molecule.
+///
+/// - anchor (str): CeTZ group anchor such as `"center"`, `"north"`, or `"east"`.
+/// -> dictionary
 #let molecule-anchor(anchor: "center") = (kind: "molecule", anchor: anchor)
 
 #let _normalized-annotations(annotations) = {
@@ -693,6 +736,19 @@
   }
 }
 
+/// Render a molecule from Molfile or SDF data.
+///
+/// Input coordinates are preserved. On Typst 0.15.0 and later, `data` may be a
+/// `path`; earlier versions should pass the result of `read`.
+///
+/// - data (any): Molfile/SDF text, bytes, or a Typst 0.15.0+ path.
+/// - abbreviate (bool): Fold common hydrogens and terminal groups into labels.
+/// - skeletal (bool): Draw a skeletal formula; overrides `abbreviate`.
+/// - dump (bool): Show generated Alchemist source instead of rendering.
+/// - config (dictionary): Visual configuration passed to Alchemist.
+/// - annotations (dictionary, array, none): Overlay annotation or annotation array.
+/// - show-indices (bool, str): Show `"atoms"`, `"bonds"`, or `"all"` indices for authoring.
+/// -> content
 #let render-mol(data, abbreviate: false, skeletal: false, dump: false, config: (:), annotations: none, show-indices: false) = {
   let mode = "full"
   if skeletal {
@@ -702,18 +758,30 @@
   }
 
   let base-sep = config.at("atom-sep", default: 3em)
-  
-  let cbor-bytes = mol-plugin.sdf_to_ast(_mol-data-to-bytes(data), bytes(mode))
-  let ast = cbor(cbor-bytes)
-  
+  let mol-data = _mol-data-to-bytes(data)
+
   if dump {
-    let code = "#let base-sep = " + repr(base-sep) + "\n#skeletize({\n" + _ast-to-alchemist-code(ast, indent: 1) + "})"
+    let code = str(mol-plugin.sdf_to_code(mol-data, bytes(mode), bytes(repr(base-sep)), bytes("2")))
     return raw(code, block: true, lang: "typst")
   } else {
+    let ast = cbor(mol-plugin.sdf_to_ast(mol-data, bytes(mode)))
     _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
   }
 }
 
+/// Parse, lay out, and render a molecule from a SMILES string.
+///
+/// The generated 2D coordinates are passed through the same Alchemist rendering
+/// pipeline as Molfile/SDF input.
+///
+/// - smiles (str): SMILES notation for one molecule.
+/// - abbreviate (bool): Fold common hydrogens and terminal groups into labels.
+/// - skeletal (bool): Draw a skeletal formula; overrides `abbreviate`.
+/// - dump (bool): Show generated Alchemist source instead of rendering.
+/// - config (dictionary): Visual configuration passed to Alchemist.
+/// - annotations (dictionary, array, none): Overlay annotation or annotation array.
+/// - show-indices (bool, str): Show `"atoms"`, `"bonds"`, or `"all"` indices for authoring.
+/// -> content
 #let render-smiles(smiles, abbreviate: false, skeletal: false, dump: false, config: (:), annotations: none, show-indices: false) = {
   let mode = "full"
   if skeletal {
@@ -729,13 +797,12 @@
     mol-plugin.smiles_to_layout_input(bytes(smiles))
   }
   let coords = smiles-plugin.layout_coordinates(layout-input)
-  let cbor-bytes = mol-plugin.smiles_to_ast(bytes(smiles), coords, bytes(mode))
-  let ast = cbor(cbor-bytes)
 
   if dump {
-    let code = "#let base-sep = " + repr(base-sep) + "\n#skeletize({\n" + _ast-to-alchemist-code(ast, indent: 1) + "})"
+    let code = str(mol-plugin.smiles_to_code(bytes(smiles), coords, bytes(mode), bytes(repr(base-sep)), bytes("2")))
     raw(code, block: true, lang: "typst")
   } else {
+    let ast = cbor(mol-plugin.smiles_to_ast(bytes(smiles), coords, bytes(mode)))
     let rendered = _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
     let annotations = _collect-annotations(ast)
     if annotations.len() == 0 {

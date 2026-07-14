@@ -8,17 +8,66 @@
 #let docs-cid-93406-sdf = read("assets/Structure2D_COMPOUND_CID_93406.sdf")
 #let docs-sid-93298-sdf = read("assets/DepositedStructure_SUBSTANCE_SID_93298_Version_3.sdf")
 
+#let styled-theme = create-theme(
+  fonts: (
+    serif: ("Times New Roman", "Georgia"),
+    sans: ("Helvetica Neue", "Arial"),
+    mono: ("Menlo", "Courier New"),
+  ),
+  text: (
+    size: 11pt,
+    font: ("Times New Roman", "Georgia"),
+    fill: rgb(35, 31, 32),
+  ),
+  heading: (
+    font: ("Helvetica Neue", "Arial"),
+    fill: rgb(35, 31, 32),
+  ),
+  emph: (
+    link: rgb("#1f4f73"),
+  ),
+  code: (
+    size: 9pt,
+    font: ("Menlo", "Courier New"),
+    fill: rgb("#555555"),
+  ),
+)
+
+#let my-theme = create-theme(
+  base-theme: styled-theme,
+
+  title-page: (doc, theme) => {
+    let license = doc.package.license
+
+    let patched-doc = doc + (
+      package: doc.package + (
+        license: [
+          #h(-4 * theme.text.size)
+          #linebreak()
+          #license
+        ],
+      ),
+    )
+
+    (styled-theme.title-page)(patched-doc, theme)
+  },
+)
+
 #show: mantys(
   ..infos,
+
   title: [#infos.package.name],
   subtitle: [Molecule rendering from Molfile, SDF, and SMILES],
   date: datetime.today(),
+
   abstract: [
     `molchemist` renders chemical structures from Molfile / SDF data. It can also parse SMILES strings by generating a 2D layout first. The package turns molecular graphs into an `alchemist` drawing program and renders the final figure with CeTZ.
 
     The package is aimed at Typst documents that need compact molecule figures, publication-oriented skeletal formulae, and light annotation without leaving Typst.
   ],
+
   wrap-snippets: true,
+
   examples-scope: (
     scope: (
       molchemist: molchemist,
@@ -31,30 +80,8 @@
       molchemist: "*",
     ),
   ),
-  theme: create-theme(
-    fonts: (
-      serif: ("Times New Roman", "Georgia"),
-      sans: ("Helvetica Neue", "Arial"),
-      mono: ("Menlo", "Courier New"),
-    ),
-    text: (
-      size: 11pt,
-      font: ("Times New Roman", "Georgia"),
-      fill: rgb(35, 31, 32),
-    ),
-    heading: (
-      font: ("Helvetica Neue", "Arial"),
-      fill: rgb(35, 31, 32),
-    ),
-    emph: (
-      link: rgb("#1f4f73"),
-    ),
-    code: (
-      size: 9pt,
-      font: ("Menlo", "Courier New"),
-      fill: rgb("#555555"),
-    ),
-  ),
+
+  theme: my-theme,
 )
 
 #let example = example.with(side-by-side: false, breakable: true)
@@ -782,6 +809,12 @@ With #arg[dump], `molchemist` returns generated `alchemist` source instead of a 
 ][
   #render-mol(docs-cid-241-sdf, skeletal: true, dump: true)
 ]
+
+= Command-Line Export
+
+For scripts and editor workflows, install the `molchemist-cli` crate with `cargo install --locked molchemist-cli`. Its `molchemist dump` command accepts Molfile, SDF, or SMILES input and writes the same formatted source as #arg[dump] to standard output. Add `--standalone` to include the current `alchemist` import and an auto-sized page, or `--output figure.typ` to write directly to a file.
+
+For example, `molchemist dump molecule.sdf > molecule.typ` ejects an SDF structure. For SMILES, use `molchemist dump --smiles "CC(=O)O" --mode skeletal`; adding `--standalone --output acetic-acid.typ` creates a complete Typst document.
 
 = Publication Guidance
 

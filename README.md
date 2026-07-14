@@ -152,6 +152,19 @@ When `dump: true` is passed, `molchemist` will not render the molecule. Instead,
 
 ![Dump Mode](package/images/ex05.png)
 
+### Command-Line Export
+
+For scripts and editor workflows, install the optional `molchemist` executable from the `molchemist-cli` crate. It accepts Molfile/SDF files, SMILES strings, or standard input and writes formatted `alchemist` source to standard output.
+
+```sh
+cargo install --locked molchemist-cli
+
+molchemist dump molecule.sdf > molecule.typ
+molchemist dump --smiles 'CC(=O)O' --mode skeletal --standalone --output acetic-acid.typ
+```
+
+The CLI embeds the same WASM conversion modules as this Typst package, so its default source matches `dump: true`. Use `molchemist dump --help` for format, record-selection, indentation, and standalone-document options.
+
 ## Known Limitations
 
 When rendering highly complex or dense molecules (e.g., polycyclic compounds, dense substituents) in the default **Full Mode**, you may encounter overlapping atoms or intersecting bonds. This occurs because the 2D absolute coordinates provided in the source `.sdf`/`.mol` files might not allocate enough physical space on the canvas to draw every explicit text label without collisions.
@@ -236,6 +249,8 @@ Use `cetz-annotation` as the escape hatch for advanced figure polishing:
 
 ## License
 
-The `molchemist` package code is distributed under the MIT License. See [LICENSE](LICENSE) for details.
+The molchemist-authored Typst source is distributed under the MIT License. See [LICENSE](LICENSE) for its terms.
 
-Redistributed third-party code and bundled example-data provenance, including PubChem-derived SDF/example images, are documented separately in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The published package also contains precompiled WASM components, so its manifest uses the aggregate SPDX expression `MIT AND BSD-3-Clause AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)`. In particular, `molchemist_plugin.wasm` contains MIT- and Apache-2.0-licensed components, and `molchemist_smiles_plugin.wasm` contains MIT-, BSD-3-Clause-, and Apache-2.0-with-LLVM-exception components. `wasm-minimal-protocol`, incorporated into the Rust plugin, is released under the Unlicense and is recorded in the notices rather than the manifest expression.
+
+The complete file-to-license mapping, required license texts, and bundled example-data provenance are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

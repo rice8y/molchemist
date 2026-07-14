@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.9)
 
 project(molchemist_smiles_plugin LANGUAGES C CXX)
 
+set(MOLCHEMIST_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../crates/molchemist-core)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -12,14 +14,21 @@ set(COORDGEN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(COORDGEN_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(COORDGEN_USE_MAEPARSER OFF CACHE BOOL "" FORCE)
 set(COORDGEN_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/vendor/coordgenlibs ${CMAKE_CURRENT_BINARY_DIR}/vendor/coordgenlibs)
+add_subdirectory(${MOLCHEMIST_CORE_DIR}/vendor/coordgenlibs ${CMAKE_CURRENT_BINARY_DIR}/vendor/coordgenlibs)
+target_sources(coordgen PRIVATE ${MOLCHEMIST_CORE_DIR}/native/coordgen_engine.cpp)
+target_include_directories(coordgen PRIVATE
+  ${MOLCHEMIST_CORE_DIR}/native
+  ${MOLCHEMIST_CORE_DIR}/vendor/coordgenlibs
+)
 
 add_library(${PROJECT_NAME}-object OBJECT src/coordgen_smiles.cpp)
 target_include_directories(${PROJECT_NAME}-object
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/vendor/coordgenlibs
+    ${MOLCHEMIST_CORE_DIR}/native
+    ${MOLCHEMIST_CORE_DIR}/vendor/coordgenlibs
 )
 target_link_libraries(${PROJECT_NAME}-object PRIVATE coordgen)
 

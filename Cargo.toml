@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "crates/molchemist-core",
+  "crates/molchemist-cli",
+  "wasm-plugins/core",
+]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

@@ -6,11 +6,11 @@ Its role is intentionally small:
 
 `SMILES (parsed in Rust) -> atom/bond payload -> CoordgenLibs -> 2D coordinates`
 
-The Rust plugin in `../core` handles OpenSMILES parsing, aromatic bond kekulization, and AST generation.
-This plugin only reads the compact layout payload, runs CoordgenLibs, and returns packed 2D coordinates.
+The Rust plugin in `../core` handles OpenSMILES parsing, aromatic bond kekulization, and AST generation. This plugin only reads the compact layout payload, runs CoordgenLibs, and returns packed 2D coordinates.
 
 ## Build notes
 
-- `vendor/coordgenlibs` is copied from the `coordgen` crate source so the Typst plugin build stays self-contained.
+- CoordgenLibs is vendored once under `../../crates/molchemist-core/vendor/coordgenlibs`.
+- The adapter and native test bridge share `../../crates/molchemist-core/native/coordgen_engine.cpp`.
 - The output module is `molchemist_smiles_plugin.wasm`.
 - The module uses Typst's `wasm_minimal_protocol` imports and is intended to be called from Typst, not from JavaScript.

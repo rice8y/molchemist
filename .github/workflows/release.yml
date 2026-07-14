@@ -3,31 +3,131 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+
+permissions:
+  contents: read
 
 jobs:
-  build-release:
+  verify:
+    name: Verify release sources
     runs-on: ubuntu-latest
-    
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo test -p molchemist-core --features native-layout --locked
+      - run: ./scripts/check-wasm-sync.sh
+      - run: ./scripts/check-licenses.sh
+      - run: cargo package -p molchemist-cli --locked
+
+  typst-package:
+    name: Package Typst package
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build package archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          package_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' package/typst.toml)"
+          test -n "$package_version"
+
+          mkdir -p release-assets typst-dist/molchemist
+          cp -a package/. typst-dist/molchemist/
+          (
+            cd typst-dist
+            zip -qr "../release-assets/molchemist-typst-${package_version}.zip" molchemist
+          )
+      - uses: actions/upload-artifact@v7
+        with:
+          name: typst-package
+          path: release-assets/*
+          if-no-files-found: error
+
+  cli-binaries:
+    name: Build CLI (${{ matrix.target }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary: molchemist
+            archive: tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: molchemist
+            archive: tar.gz
+          - os: macos-15
+            target: aarch64-apple-darwin
+            binary: molchemist
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: molchemist.exe
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.86
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build CLI
+        run: cargo build -p molchemist-cli --release --locked --target ${{ matrix.target }}
+      - name: Package CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/molchemist-cli/Cargo.toml)"
+          test -n "$version"
+          asset="molchemist-cli-${version}-${{ matrix.target }}.${{ matrix.archive }}"
+
+          mkdir bundle
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" bundle/
+          cp crates/molchemist-cli/README.md bundle/
+          cp crates/molchemist-cli/THIRD_PARTY_NOTICES.md bundle/
+          cp crates/molchemist-cli/LICENSE* bundle/
+
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            (cd bundle && 7z a "../$asset" ./*)
+          else
+            tar -czf "$asset" -C bundle .
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.target }}
+          path: molchemist-cli-*.${{ matrix.archive }}
+          if-no-files-found: error
+
+  github-release:
+    name: Publish GitHub release
+    needs: [typst-package, cli-binaries]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Create distribution folder
-        run: |
-          mkdir -p dist/molchemist
-          cp -r package/* dist/molchemist/
-          cp LICENSE README.md THIRD_PARTY_NOTICES.md dist/molchemist/
-
-      - name: Compress dist
-        run: cd dist && zip -r ../molchemist-${{ github.ref_name }}.zip molchemist
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v8
         with:
-          files: molchemist-${{ github.ref_name }}.zip
+          path: release-assets
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: release-assets/*
+          fail_on_unmatched_files: true
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

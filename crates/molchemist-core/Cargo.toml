@@ -1,0 +1,28 @@
+[package]
+name = "molchemist-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Shared molecule-to-Alchemist conversion engine for molchemist"
+license = "MIT AND BSD-3-Clause"
+repository = "https://github.com/rice8y/molchemist"
+publish = false
+readme = "README.md"
+keywords = ["chemistry", "smiles", "sdf", "typst", "alchemist"]
+categories = ["science", "parser-implementations"]
+build = "build.rs"
+links = "molchemist_coordgen"
+
+[features]
+default = []
+huckel-validation = []
+native-layout = []
+
+[dependencies]
+ciborium = "0.2.2"
+sdfrust = "0.6"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2"
+
+[build-dependencies]
+cc = "1.2"
