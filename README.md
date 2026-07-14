@@ -249,6 +249,8 @@ Use `cetz-annotation` as the escape hatch for advanced figure polishing:
 
 ## License
 
-The `molchemist` package code is distributed under the MIT License. See [LICENSE](LICENSE) for details.
+The molchemist-authored Typst source is distributed under the MIT License. See [LICENSE](LICENSE) for its terms.
 
-Redistributed third-party code and bundled example-data provenance, including PubChem-derived SDF/example images, are documented separately in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The published package also contains precompiled WASM components, so its manifest uses the aggregate SPDX expression `MIT AND BSD-3-Clause AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)`. In particular, `molchemist_plugin.wasm` contains MIT- and Apache-2.0-licensed components, and `molchemist_smiles_plugin.wasm` contains MIT-, BSD-3-Clause-, and Apache-2.0-with-LLVM-exception components. `wasm-minimal-protocol`, incorporated into the Rust plugin, is released under the Unlicense and is recorded in the notices rather than the manifest expression.
+
+The complete file-to-license mapping, required license texts, and bundled example-data provenance are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
