@@ -152,6 +152,19 @@ When `dump: true` is passed, `molchemist` will not render the molecule. Instead,
 
 ![Dump Mode](package/images/ex05.png)
 
+### Command-Line Export
+
+For scripts and editor workflows, install the optional `molchemist` executable from the `molchemist-cli` crate. It accepts Molfile/SDF files, SMILES strings, or standard input and writes formatted `alchemist` source to standard output.
+
+```sh
+cargo install --locked molchemist-cli
+
+molchemist dump molecule.sdf > molecule.typ
+molchemist dump --smiles 'CC(=O)O' --mode skeletal --standalone --output acetic-acid.typ
+```
+
+The CLI embeds the same WASM conversion modules as this Typst package, so its default source matches `dump: true`. Use `molchemist dump --help` for format, record-selection, indentation, and standalone-document options.
+
 ## Known Limitations
 
 When rendering highly complex or dense molecules (e.g., polycyclic compounds, dense substituents) in the default **Full Mode**, you may encounter overlapping atoms or intersecting bonds. This occurs because the 2D absolute coordinates provided in the source `.sdf`/`.mol` files might not allocate enough physical space on the canvas to draw every explicit text label without collisions.
