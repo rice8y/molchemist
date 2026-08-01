@@ -33,6 +33,9 @@ pub enum Command {
     },
     #[serde(rename = "branch")]
     Branch { body: Vec<Command> },
+    /// Reset placement before rendering the next disconnected component.
+    #[serde(rename = "component-break")]
+    ComponentBreak,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1089,6 +1092,7 @@ fn ast_from_render_mol(
 
     let mut visited_nodes = vec![false; mol.atoms.len()];
     let mut handled_bonds = vec![false; mol.bonds.len()];
+    let components = connected_components(&adj);
     let labels = build_labels(mol, &adj, mode_str, &mut visited_nodes, &mut handled_bonds);
     let rings = find_rings(&adj, mol.atoms.len());
     let context = DfsContext {
@@ -1101,15 +1105,26 @@ fn ast_from_render_mol(
     };
 
     let mut root_commands = Vec::new();
-    for start_node in 0..mol.atoms.len() {
-        if !visited_nodes[start_node] {
-            dfs(
-                start_node,
-                &context,
-                &mut visited_nodes,
-                &mut handled_bonds,
-                &mut root_commands,
-            );
+    let mut has_component = false;
+    for component in components {
+        let mut emitted_component = false;
+        for start_node in component {
+            if !visited_nodes[start_node] {
+                if !emitted_component && has_component {
+                    root_commands.push(Command::ComponentBreak);
+                }
+                dfs(
+                    start_node,
+                    &context,
+                    &mut visited_nodes,
+                    &mut handled_bonds,
+                    &mut root_commands,
+                );
+                emitted_component = true;
+            }
+        }
+        if emitted_component {
+            has_component = true;
         }
     }
 
@@ -1130,7 +1145,11 @@ fn build_labels(
 
         if mode_str == "abbreviate" || mode_str == "skeletal" {
             if atom.element == "H" {
-                visited_nodes[i] = true;
+                if is_foldable_hydrogen(i, mol, adj) {
+                    visited_nodes[i] = true;
+                } else {
+                    labels[i] = render_label(atom, atom.hydrogens);
+                }
                 continue;
             }
 
@@ -1141,15 +1160,16 @@ fn build_labels(
 
             let total_h = atom.hydrogens + explicit_h_count;
             if atom.element == "C" {
+                let heavy_atoms = adj[i].len().saturating_sub(explicit_h_count as usize);
                 if mode_str == "skeletal" {
-                    if atom.stereo_annotation.is_some()
+                    if heavy_atoms == 0
+                        || atom.stereo_annotation.is_some()
                         || atom.charge != 0
                         || has_visible_atom_metadata(atom)
                     {
                         labels[i] = render_label(atom, total_h);
                     }
                 } else {
-                    let heavy_atoms = adj[i].len().saturating_sub(explicit_h_count as usize);
                     labels[i] = if (heavy_atoms <= 1 && total_h > 0)
                         || atom.stereo_annotation.is_some()
                         || atom.charge != 0
@@ -1169,6 +1189,33 @@ fn build_labels(
     }
 
     labels
+}
+
+fn connected_components(adj: &[Vec<(usize, BondKind, usize)>]) -> Vec<Vec<usize>> {
+    let mut components = Vec::new();
+    let mut visited = vec![false; adj.len()];
+
+    for start in 0..adj.len() {
+        if visited[start] {
+            continue;
+        }
+
+        let mut component = Vec::new();
+        let mut queue = VecDeque::from([start]);
+        visited[start] = true;
+        while let Some(atom) = queue.pop_front() {
+            component.push(atom);
+            for &(neighbor, _, _) in &adj[atom] {
+                if !visited[neighbor] {
+                    visited[neighbor] = true;
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+        components.push(component);
+    }
+
+    components
 }
 
 fn has_visible_atom_metadata(atom: &RenderAtom) -> bool {
@@ -1203,12 +1250,24 @@ fn explicit_h_neighbors(
     let mut count = 0u8;
     let mut bond_indices = Vec::new();
     for &(neighbor, _, bond_idx) in &adj[atom_idx] {
-        if mol.atoms[neighbor].element == "H" {
+        if is_foldable_hydrogen(neighbor, mol, adj) {
             count = count.saturating_add(1);
             bond_indices.push(bond_idx);
         }
     }
     (count, bond_indices)
+}
+
+fn is_foldable_hydrogen(
+    atom_idx: usize,
+    mol: &RenderMol,
+    adj: &[Vec<(usize, BondKind, usize)>],
+) -> bool {
+    mol.atoms[atom_idx].element == "H"
+        && matches!(
+            adj[atom_idx].as_slice(),
+            [(neighbor, _, _)] if mol.atoms[*neighbor].element != "H"
+        )
 }
 
 fn atom_label(element: &str, hydrogen_count: u8, charge: i8) -> String {
@@ -1669,6 +1728,14 @@ mod tests {
         }
     }
 
+    fn contains_fragment(commands: &[Command], expected: &str) -> bool {
+        commands.iter().any(|command| match command {
+            Command::Fragment { element, .. } => element == expected,
+            Command::Branch { body } => contains_fragment(body, expected),
+            Command::Bond { .. } | Command::ComponentBreak => false,
+        })
+    }
+
     const CARBON_V2000: &str = concat!(
         "carbon\n",
         "  molchemist\n",
@@ -1811,6 +1878,134 @@ mod tests {
             sdf_to_commands(&non_finite, RenderMode::Full).unwrap_err(),
             "SDF record 1 atom 1 has non-finite coordinates"
         );
+    }
+
+    #[test]
+    fn sdf_preserves_disconnected_components_with_a_boundary() {
+        let sdf = concat!(
+            "sodium chloride\n",
+            "  molchemist\n",
+            "\n",
+            "  2  0  0  0  0  0  0  0  0  0999 V2000\n",
+            "    0.0000    0.0000    0.0000 Na  0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    3.0000    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "M  CHG  2   1   1   2  -1\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Abbreviate).unwrap();
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                Command::Fragment { element: sodium, name: sodium_name, .. },
+                Command::ComponentBreak,
+                Command::Fragment { element: chloride, name: chloride_name, .. },
+            ] if sodium == "Na^+"
+                && sodium_name == "a0"
+                && chloride == "Cl^-"
+                && chloride_name == "a1"
+        ));
+    }
+
+    #[test]
+    fn sdf_component_order_uses_the_first_source_atom_even_when_it_is_folded() {
+        let sdf = concat!(
+            "interleaved components\n",
+            "  molchemist\n",
+            "\n",
+            "  3  1  0  0  0  0  0  0  0  0999 V2000\n",
+            "    0.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    4.0000    0.0000    0.0000 Na  0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    1.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "  1  3  1  0  0  0  0\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Abbreviate).unwrap();
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                Command::Fragment { element: water, name: oxygen_name, .. },
+                Command::ComponentBreak,
+                Command::Fragment { element: sodium, name: sodium_name, .. },
+            ] if water == "OH"
+                && oxygen_name == "a2"
+                && sodium == "Na"
+                && sodium_name == "a1"
+        ));
+    }
+
+    #[test]
+    fn hydrogen_bridging_heavy_atoms_is_not_folded_or_split() {
+        let sdf = concat!(
+            "bridging hydrogen\n",
+            "  molchemist\n",
+            "\n",
+            "  3  2  0  0  0  0  0  0  0  0999 V2000\n",
+            "   -1.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    0.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    1.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "  1  2  1  0  0  0  0\n",
+            "  2  3  1  0  0  0  0\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Abbreviate).unwrap();
+        assert!(contains_fragment(&commands, "H"));
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::ComponentBreak)));
+    }
+
+    #[test]
+    fn disconnected_smiles_keeps_isolated_hydrogen_and_carbon_visible() {
+        let coords = coordinate_payload(&[(0.0, 0.0), (2.0, 0.0)], 0);
+        let commands =
+            smiles_to_commands_with_coords("[H+].C", &coords, RenderMode::Skeletal).unwrap();
+
+        assert!(matches!(
+            commands.as_slice(),
+            [
+                Command::Fragment { element: hydrogen, name: hydrogen_name, .. },
+                Command::ComponentBreak,
+                Command::Fragment { element: carbon, name: carbon_name, .. },
+            ] if hydrogen == "H^+"
+                && hydrogen_name == "a0"
+                && carbon == "CH_4"
+                && carbon_name == "a1"
+        ));
+    }
+
+    #[test]
+    fn full_smiles_mode_keeps_component_boundaries_after_expanding_hydrogens() {
+        let coords = coordinate_payload(
+            &[
+                (0.0, 0.0),
+                (4.0, 0.0),
+                (-1.0, 0.0),
+                (0.0, 1.0),
+                (1.0, 0.0),
+                (0.0, -1.0),
+            ],
+            4,
+        );
+        let commands =
+            smiles_to_commands_with_coords("C.[Cl-]", &coords, RenderMode::Full).unwrap();
+
+        let breaks = commands
+            .iter()
+            .filter(|command| matches!(command, Command::ComponentBreak))
+            .count();
+        let break_index = commands
+            .iter()
+            .position(|command| matches!(command, Command::ComponentBreak))
+            .unwrap();
+        assert_eq!(breaks, 1);
+        assert!(matches!(
+            commands.get(break_index + 1),
+            Some(Command::Fragment { element, name, .. })
+                if element == "Cl^-" && name == "a1"
+        ));
     }
 
     #[test]

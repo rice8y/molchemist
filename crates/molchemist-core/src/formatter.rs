@@ -118,6 +118,9 @@ fn format_commands(output: &mut String, commands: &[Command], depth: usize, inde
                 format_commands(output, body, depth + 1, indent_width);
                 writeln!(output, "{indent}}})").unwrap();
             }
+            Command::ComponentBreak => {
+                writeln!(output, "{indent}operator(none, margin: base-sep * 0.5)").unwrap();
+            }
         }
     }
 }
@@ -330,6 +333,39 @@ mod tests {
             "tl: [13], tr: [+•], br: [:7]",
             ")), name: \"a0\")",
         )));
+    }
+
+    #[test]
+    fn component_breaks_reset_placement_without_a_visible_operator() {
+        let commands = vec![
+            Command::Fragment {
+                element: "Na^+".to_string(),
+                name: "a0".to_string(),
+                links: Vec::new(),
+                atom: None,
+                annotation: None,
+            },
+            Command::ComponentBreak,
+            Command::Fragment {
+                element: "Cl^-".to_string(),
+                name: "a1".to_string(),
+                links: Vec::new(),
+                atom: None,
+                annotation: None,
+            },
+        ];
+
+        assert_eq!(
+            format_alchemist(&commands, "3em", 2),
+            concat!(
+                "#let base-sep = 3em\n",
+                "#skeletize({\n",
+                "  fragment(\"Na^+\", name: \"a0\")\n",
+                "  operator(none, margin: base-sep * 0.5)\n",
+                "  fragment(\"Cl^-\", name: \"a1\")\n",
+                "})",
+            )
+        );
     }
 
     #[test]

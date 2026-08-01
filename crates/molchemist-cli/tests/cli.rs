@@ -35,6 +35,21 @@ fn dumps_smiles_to_stdout_without_diagnostics() {
 }
 
 #[test]
+fn dumps_disconnected_smiles_as_separate_components() {
+    let output = molchemist()
+        .args(["dump", "--smiles", "[Na+].[Cl-]", "--mode", "abbreviate"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("fragment(\"Na^+\", name: \"a0\")"));
+    assert!(stdout.contains("operator(none, margin: base-sep * 0.5)"));
+    assert!(stdout.contains("fragment(\"Cl^-\", name: \"a1\")"));
+}
+
+#[test]
 fn dumps_sdf_file_selected_by_extension() {
     let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/Structure2D_COMPOUND_CID_241.sdf");
@@ -307,6 +322,34 @@ fn local_typst_package_selects_sdf_records_and_renders_v3000() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixture = root.join("crates/molchemist-cli/tests/fixtures/sdf-input-fidelity.typ");
     let pdf = temp_path("sdf-input-fidelity").with_extension("pdf");
+
+    let compiled = Command::new("typst")
+        .current_dir(&root)
+        .args([
+            "compile",
+            fixture.to_str().unwrap(),
+            pdf.to_str().unwrap(),
+            "--root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        compiled.status.success(),
+        "Typst failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(pdf.exists());
+    fs::remove_file(pdf).unwrap();
+}
+
+#[test]
+#[ignore = "requires Typst and the alchemist package"]
+fn local_typst_package_renders_and_annotates_multiple_components() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = root.join("crates/molchemist-cli/tests/fixtures/multicomponent-rendering.typ");
+    let pdf = temp_path("multicomponent-rendering").with_extension("pdf");
 
     let compiled = Command::new("typst")
         .current_dir(&root)

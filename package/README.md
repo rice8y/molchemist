@@ -130,6 +130,16 @@ molchemist dump structures.sdf --record 2 --mode skeletal
 
 Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers produce an explicit error instead of an empty drawing.
 
+### Multi-component Structures
+
+Disconnected Molfile/SDF graphs and dot-separated SMILES are rendered as distinct components in one figure. Components keep their source order and global atom/bond indices, but are separated by whitespace without adding a visible chemical operator.
+
+```typ
+#render-smiles("[Na+].[Cl-]", abbreviate: true)
+```
+
+Isolated atoms remain visible in abbreviated and skeletal modes, including standalone hydrogen and zero-heavy-neighbor carbon components such as methane. Annotation anchors and `show-indices` continue to address the original input-wide indices across every component.
+
 ### Customizing Appearance
 
 Under the hood, `molchemist` parses the graph and generates native `alchemist` elements. You can customize the look of your molecules by passing styling arguments via the `config` dictionary, which are passed directly to `alchemist`'s `skeletize` function.
