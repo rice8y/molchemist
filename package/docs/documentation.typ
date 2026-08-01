@@ -113,6 +113,8 @@ On Typst 0.15.0 and later, @cmd:render-mol[-] can also receive `path("molecule.s
 
 Molfile/SDF records are detected as V2000 or V3000 automatically. When one SDF contains multiple structures, pass the one-based #arg[record] option, for example `render-mol(sdf-data, record: 2)`. Missing records, empty structures, and malformed coordinate data report an error instead of producing an empty drawing.
 
+SDF bond semantics are retained beyond the usual single, double, and triple orders. Aromatic and query bonds use dashed/dotted variants, any and `either` bonds use a wavy line, coordination bonds retain their donor-to-acceptor arrow direction, and hydrogen bonds use a dotted line. Long hydrogen bonds do not affect the covalent bond-length normalization used by the renderer.
+
 SMILES is useful for compact inline examples or generated documents. Because SMILES stores connectivity rather than drawing coordinates, `molchemist` first computes a 2D layout and then renders the structure.
 
 Dot-separated SMILES and disconnected Molfile/SDF graphs keep every component and place them side by side without inserting a visible operator. Atom and bond indices remain global across the complete input, so #arg[show-indices] and annotation anchors work across component boundaries. Isolated hydrogen and carbon-only components also remain visible in abbreviated and skeletal modes.

@@ -98,6 +98,26 @@ enum BondKind {
     Single,
     Double,
     Triple,
+    Aromatic,
+    SingleOrDouble,
+    SingleOrAromatic,
+    DoubleOrAromatic,
+    Any,
+    Coordination,
+    Hydrogen,
+}
+
+impl BondKind {
+    fn has_parallel_line(self) -> bool {
+        matches!(
+            self,
+            Self::Double | Self::Aromatic | Self::SingleOrDouble | Self::DoubleOrAromatic
+        )
+    }
+
+    fn contributes_to_average_length(self) -> bool {
+        self != Self::Hydrogen
+    }
 }
 
 #[derive(Clone)]
@@ -393,9 +413,16 @@ fn render_mol_from_sdf(mol: &sdfrust::Molecule, sdf: &str) -> RenderMol {
             atom1: bond.atom1,
             atom2: bond.atom2,
             kind: match bond.order {
+                BondOrder::Single => BondKind::Single,
                 BondOrder::Double => BondKind::Double,
                 BondOrder::Triple => BondKind::Triple,
-                _ => BondKind::Single,
+                BondOrder::Aromatic => BondKind::Aromatic,
+                BondOrder::SingleOrDouble => BondKind::SingleOrDouble,
+                BondOrder::SingleOrAromatic => BondKind::SingleOrAromatic,
+                BondOrder::DoubleOrAromatic => BondKind::DoubleOrAromatic,
+                BondOrder::Any => BondKind::Any,
+                BondOrder::Coordination => BondKind::Coordination,
+                BondOrder::Hydrogen => BondKind::Hydrogen,
             },
         })
         .collect();
@@ -1070,6 +1097,7 @@ fn ast_from_render_mol(
     let mut adj: Vec<Vec<(usize, BondKind, usize)>> = vec![Vec::new(); mol.atoms.len()];
     let mut total_len = 0.0;
     let mut bond_count = 0usize;
+    let mut fallback_total_len = 0.0;
 
     for (i, bond) in mol.bonds.iter().enumerate() {
         adj[bond.atom1].push((bond.atom2, bond.kind, i));
@@ -1079,12 +1107,18 @@ fn ast_from_render_mol(
         let v = &mol.atoms[bond.atom2];
         let dx = u.x - v.x;
         let dy = u.y - v.y;
-        total_len += (dx * dx + dy * dy).sqrt();
-        bond_count += 1;
+        let length = (dx * dx + dy * dy).sqrt();
+        fallback_total_len += length;
+        if bond.kind.contributes_to_average_length() {
+            total_len += length;
+            bond_count += 1;
+        }
     }
 
     let avg_length = if bond_count > 0 {
         total_len / bond_count as f64
+    } else if !mol.bonds.is_empty() {
+        fallback_total_len / mol.bonds.len() as f64
     } else {
         1.0
     };
@@ -1297,8 +1331,9 @@ fn extract_sdf_stereo(mol: &sdfrust::Molecule) -> HashMap<(usize, usize), (u8, b
     for bond in &mol.bonds {
         let stereo = match bond.stereo {
             BondStereo::Up => 1,
+            BondStereo::Either => 4,
             BondStereo::Down => 6,
-            BondStereo::None | BondStereo::Either => continue,
+            BondStereo::None => continue,
         };
         if bond.atom1 < mol.atoms.len() && bond.atom2 < mol.atoms.len() {
             map.insert((bond.atom1, bond.atom2), (stereo, true));
@@ -1464,6 +1499,7 @@ fn bond_func_name(
     kind: BondKind,
     u: usize,
     v: usize,
+    coordination_forward: bool,
     stereo_map: &HashMap<(usize, usize), (u8, bool)>,
 ) -> &'static str {
     if kind == BondKind::Single {
@@ -1483,6 +1519,7 @@ fn bond_func_name(
                         "cram-dashed-right"
                     };
                 }
+                4 => return "either",
                 _ => {}
             }
         }
@@ -1492,6 +1529,14 @@ fn bond_func_name(
         BondKind::Double => "double",
         BondKind::Triple => "triple",
         BondKind::Single => "single",
+        BondKind::Aromatic => "aromatic",
+        BondKind::SingleOrDouble => "single-or-double",
+        BondKind::SingleOrAromatic => "single-or-aromatic",
+        BondKind::DoubleOrAromatic => "double-or-aromatic",
+        BondKind::Any => "any",
+        BondKind::Coordination if coordination_forward => "coordination-right",
+        BondKind::Coordination => "coordination-left",
+        BondKind::Hydrogen => "hydrogen",
     }
 }
 
@@ -1527,7 +1572,7 @@ fn dfs(
     let mut links = Vec::new();
     for &(v, kind, bond_idx) in &back_edges {
         handled_bonds[bond_idx] = true;
-        let offset = if kind == BondKind::Double {
+        let offset = if kind.has_parallel_line() {
             calculate_double_bond_offset(u, v, context.mol, context.rings)
         } else {
             None
@@ -1535,7 +1580,14 @@ fn dfs(
         links.push(LinkData {
             target: format!("a{v}"),
             name: format!("b{bond_idx}"),
-            bond_type: bond_func_name(kind, u, v, context.stereo_map).to_string(),
+            bond_type: bond_func_name(
+                kind,
+                u,
+                v,
+                context.mol.bonds[bond_idx].atom1 == u,
+                context.stereo_map,
+            )
+            .to_string(),
             angle: calc_angle(u_atom, &context.mol.atoms[v]),
             offset,
             length_scale: calc_length_scale(u_atom, &context.mol.atoms[v], context.avg_length),
@@ -1567,7 +1619,7 @@ fn dfs(
             .iter()
             .any(|(next_v, _, _)| !visited_nodes[*next_v]);
 
-        let offset = if kind == BondKind::Double {
+        let offset = if kind.has_parallel_line() {
             calculate_double_bond_offset(u, v, context.mol, context.rings)
         } else {
             None
@@ -1575,7 +1627,14 @@ fn dfs(
 
         let bond_cmd = Command::Bond {
             name: format!("b{bond_idx}"),
-            bond_type: bond_func_name(kind, u, v, context.stereo_map).to_string(),
+            bond_type: bond_func_name(
+                kind,
+                u,
+                v,
+                context.mol.bonds[bond_idx].atom1 == u,
+                context.stereo_map,
+            )
+            .to_string(),
             angle: calc_angle(u_atom, &context.mol.atoms[v]),
             offset,
             length_scale: calc_length_scale(u_atom, &context.mol.atoms[v], context.avg_length),
@@ -1736,6 +1795,78 @@ mod tests {
         })
     }
 
+    fn collect_bonds(commands: &[Command], output: &mut Vec<(String, f64, Option<String>)>) {
+        for command in commands {
+            match command {
+                Command::Fragment { links, .. } => {
+                    output.extend(links.iter().map(|link| {
+                        (
+                            link.bond_type.clone(),
+                            link.length_scale,
+                            link.offset.clone(),
+                        )
+                    }));
+                }
+                Command::Bond {
+                    bond_type,
+                    length_scale,
+                    offset,
+                    ..
+                } => output.push((bond_type.clone(), *length_scale, offset.clone())),
+                Command::Branch { body } => collect_bonds(body, output),
+                Command::ComponentBreak => {}
+            }
+        }
+    }
+
+    fn bond_data(commands: &[Command]) -> Vec<(String, f64, Option<String>)> {
+        let mut output = Vec::new();
+        collect_bonds(commands, &mut output);
+        output
+    }
+
+    fn v2000_bond(order: u8, stereo: u8) -> String {
+        format!(
+            concat!(
+                "bond semantics\n",
+                "  molchemist\n",
+                "\n",
+                "  2  1  0  0  0  0  0  0  0  0999 V2000\n",
+                "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+                "    1.5000    0.0000    0.0000 N   0  0  0  0  0  0  0  0  0  0  0  0\n",
+                "  1  2{order:>3}{stereo:>3}  0  0  0\n",
+                "M  END\n",
+            ),
+            order = order,
+            stereo = stereo,
+        )
+    }
+
+    fn v3000_bond(order: u8, atom1: usize, atom2: usize) -> String {
+        format!(
+            concat!(
+                "bond semantics\n",
+                "  molchemist\n",
+                "\n",
+                "  0  0  0     0  0            999 V3000\n",
+                "M  V30 BEGIN CTAB\n",
+                "M  V30 COUNTS 2 1 0 0 0\n",
+                "M  V30 BEGIN ATOM\n",
+                "M  V30 1 C 0.0000 0.0000 0.0000 0\n",
+                "M  V30 2 N 1.5000 0.0000 0.0000 0\n",
+                "M  V30 END ATOM\n",
+                "M  V30 BEGIN BOND\n",
+                "M  V30 1 {order} {atom1} {atom2}\n",
+                "M  V30 END BOND\n",
+                "M  V30 END CTAB\n",
+                "M  END\n",
+            ),
+            order = order,
+            atom1 = atom1,
+            atom2 = atom2,
+        )
+    }
+
     const CARBON_V2000: &str = concat!(
         "carbon\n",
         "  molchemist\n",
@@ -1763,6 +1894,72 @@ mod tests {
         assert_eq!(bonds, vec![(0, 1, 1), (1, 2, 1)]);
         assert!(atom_stereo.is_empty());
         assert!(double_bond_stereo.is_empty());
+    }
+
+    #[test]
+    fn sdf_preserves_v2000_aromatic_and_query_bond_orders() {
+        let cases = [
+            (4, "aromatic"),
+            (5, "single-or-double"),
+            (6, "single-or-aromatic"),
+            (7, "double-or-aromatic"),
+            (8, "any"),
+        ];
+
+        for (order, expected) in cases {
+            let commands = sdf_to_commands(&v2000_bond(order, 0), RenderMode::Full).unwrap();
+            assert_eq!(bond_data(&commands)[0].0, expected, "bond order {order}");
+        }
+    }
+
+    #[test]
+    fn sdf_preserves_v3000_coordination_direction_and_hydrogen_bonds() {
+        let forward = sdf_to_commands(&v3000_bond(9, 1, 2), RenderMode::Full).unwrap();
+        let reverse = sdf_to_commands(&v3000_bond(9, 2, 1), RenderMode::Full).unwrap();
+        let hydrogen = sdf_to_commands(&v3000_bond(10, 1, 2), RenderMode::Full).unwrap();
+
+        assert_eq!(bond_data(&forward)[0].0, "coordination-right");
+        assert_eq!(bond_data(&reverse)[0].0, "coordination-left");
+        assert_eq!(bond_data(&hydrogen)[0].0, "hydrogen");
+        assert!((bond_data(&hydrogen)[0].1 - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sdf_preserves_either_stereochemistry_as_a_wavy_bond() {
+        let commands = sdf_to_commands(&v2000_bond(1, 4), RenderMode::Full).unwrap();
+
+        assert_eq!(bond_data(&commands)[0].0, "either");
+    }
+
+    #[test]
+    fn hydrogen_bonds_do_not_shrink_covalent_bond_lengths() {
+        let sdf = concat!(
+            "hydrogen bond scale\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 3 2 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 1 C 0.0000 0.0000 0.0000 0\n",
+            "M  V30 2 N 1.5000 0.0000 0.0000 0\n",
+            "M  V30 3 O 4.5000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 1 2\n",
+            "M  V30 2 10 2 3\n",
+            "M  V30 END BOND\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        let bonds = bond_data(&commands);
+
+        assert_eq!(bonds[0].0, "single");
+        assert!((bonds[0].1 - 1.0).abs() < 1e-9);
+        assert_eq!(bonds[1].0, "hydrogen");
+        assert!((bonds[1].1 - 2.0).abs() < 1e-9);
     }
 
     #[test]

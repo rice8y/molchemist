@@ -130,6 +130,12 @@ molchemist dump structures.sdf --record 2 --mode skeletal
 
 Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers produce an explicit error instead of an empty drawing.
 
+### Bond Semantics
+
+SDF bond orders are retained through the complete parser, AST, package, and CLI pipeline. In addition to single, double, and triple bonds, `molchemist` distinguishes aromatic, single-or-double, single-or-aromatic, double-or-aromatic, any, coordination/dative, and hydrogen bonds. V2000 `either` stereochemistry is also preserved instead of being drawn as an ordinary single bond.
+
+Extended bonds use conventional visual cues: partial dashed or dotted parallel lines for aromatic and query bonds, a wavy line for any/either bonds, a direction-preserving open arrow for coordination bonds, and a dotted line for hydrogen bonds. These helpers inherit the configured `single` or `double` stroke where applicable. Long hydrogen bonds are excluded from bond-length normalization when covalent bonds are available, so they do not shrink the rest of the structure.
+
 ### Multi-component Structures
 
 Disconnected Molfile/SDF graphs and dot-separated SMILES are rendered as distinct components in one figure. Components keep their source order and global atom/bond indices, but are separated by whitespace without adding a visible chemical operator.
