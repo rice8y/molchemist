@@ -114,6 +114,22 @@ A pure skeletal formula. All backbone carbons and their attached hydrogens are c
 
 ![Skeletal Mode](package/images/ex03.png)
 
+### SDF Versions and Record Selection
+
+Molfile/SDF input is detected as V2000 or V3000 for each selected record. For a multi-record SDF, pass the one-based `record` option; the default is the first record.
+
+```typ
+#render-mol(sdf-data, record: 2, skeletal: true)
+```
+
+The CLI uses the same selection and validation path:
+
+```sh
+molchemist dump structures.sdf --record 2 --mode skeletal
+```
+
+Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers produce an explicit error instead of an empty drawing.
+
 ### Customizing Appearance
 
 Under the hood, `molchemist` parses the graph and generates native `alchemist` elements. You can customize the look of your molecules by passing styling arguments via the `config` dictionary, which are passed directly to `alchemist`'s `skeletize` function.
@@ -195,7 +211,7 @@ For SMILES input, the default `render-smiles(...)` mode expands implicit hydroge
 
 | Function | Input | Description |
 | --- | --- | --- |
-| `render-mol` | `data: str`, `bytes`, or Typst 0.15+ `path` | Renders Molfile or SDF data. Coordinates are read from the input. |
+| `render-mol` | `data: str`, `bytes`, or Typst 0.15+ `path` | Renders V2000/V3000 Molfile or SDF data. Coordinates are read from the input. |
 | `render-smiles` | `smiles: str` | Parses SMILES, generates a 2D layout, and renders the result. |
 
 Both renderers accept the same options:
@@ -208,6 +224,8 @@ Both renderers accept the same options:
 | `config` | `dictionary` | `(:)` | Passes visual settings directly to `alchemist`. |
 | `annotations` | `annotation`, `array`, `none` | `none` | Adds labels, arrows, or custom CeTZ overlays. |
 | `show-indices` | `bool`, `str` | `false` | Shows debug labels for annotation authoring. Use `true`, `"all"`, `"atoms"`, or `"bonds"`. |
+
+`render-mol` additionally accepts `record: int`, a one-based SDF record number whose default is `1`.
 
 ### Anchors
 

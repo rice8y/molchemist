@@ -134,10 +134,13 @@ fn dump(args: DumpArgs) -> Result<(), String> {
             require_first_record(args.record, "Molfile")?;
             generator.sdf_to_code(&input.content, mode, &args.atom_sep, args.indent)
         }
-        InputFormat::Sdf => {
-            let record = select_sdf_record(&input.content, args.record.get())?;
-            generator.sdf_to_code(record, mode, &args.atom_sep, args.indent)
-        }
+        InputFormat::Sdf => generator.sdf_record_to_code(
+            &input.content,
+            mode,
+            args.record.get(),
+            &args.atom_sep,
+            args.indent,
+        ),
         InputFormat::Smiles => {
             require_first_record(args.record, "SMILES")?;
             let smiles = input.content.trim();
@@ -254,24 +257,6 @@ fn detect_format(input: &Input, requested: InputFormat) -> Result<InputFormat, S
     Err("could not detect input format; pass --format mol, sdf, or smiles".to_string())
 }
 
-fn select_sdf_record(content: &str, record: usize) -> Result<&str, String> {
-    let records = content
-        .split("$$$$")
-        .filter(|part| !part.trim().is_empty())
-        .map(|part| {
-            part.strip_prefix("\r\n")
-                .or_else(|| part.strip_prefix('\n'))
-                .unwrap_or(part)
-        })
-        .collect::<Vec<_>>();
-    records.get(record - 1).copied().ok_or_else(|| {
-        format!(
-            "SDF record {record} does not exist; input contains {} record(s)",
-            records.len()
-        )
-    })
-}
-
 fn require_first_record(record: NonZeroUsize, format: &str) -> Result<(), String> {
     if record.get() == 1 {
         Ok(())
@@ -367,13 +352,6 @@ mod tests {
             detect_format(&smiles, InputFormat::Auto).unwrap(),
             InputFormat::Smiles
         );
-    }
-
-    #[test]
-    fn selects_one_based_sdf_record() {
-        let input = "first\n$$$$\nsecond\n$$$$\n";
-        assert_eq!(select_sdf_record(input, 2).unwrap().trim(), "second");
-        assert!(select_sdf_record(input, 3).is_err());
     }
 
     #[test]

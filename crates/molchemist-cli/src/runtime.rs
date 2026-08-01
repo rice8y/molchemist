@@ -29,12 +29,25 @@ impl Generator {
         atom_sep: &str,
         indent: usize,
     ) -> Result<String, String> {
+        self.sdf_record_to_code(sdf, mode, 1, atom_sep, indent)
+    }
+
+    pub fn sdf_record_to_code(
+        &mut self,
+        sdf: &str,
+        mode: RenderMode,
+        record: usize,
+        atom_sep: &str,
+        indent: usize,
+    ) -> Result<String, String> {
+        let record = record.to_string();
         let indent = indent.to_string();
         let output = self.core.call(
-            "sdf_to_code",
+            "sdf_record_to_code",
             &[
                 sdf.as_bytes(),
                 mode.as_str().as_bytes(),
+                record.as_bytes(),
                 atom_sep.as_bytes(),
                 indent.as_bytes(),
             ],
