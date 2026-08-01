@@ -24,6 +24,12 @@
     bytes("3em"),
     bytes("2"),
   )),
+  bond-semantics: str(mol-plugin.sdf_to_code(
+    read("bond-semantics.sdf", encoding: none),
+    bytes("full"),
+    bytes("3em"),
+    bytes("2"),
+  )),
   benzene: dump-smiles("c1ccccc1", "skeletal"),
   charged: dump-smiles("OCCc1c(C)[n+](=cs1)Cc2cnc(C)nc(N)2", "abbreviate"),
   chiral: dump-smiles("N[C@@H](C)C(=O)O", "full"),

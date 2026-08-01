@@ -66,6 +66,36 @@ fn dumps_sdf_file_selected_by_extension() {
 }
 
 #[test]
+fn dumps_extended_sdf_bond_semantics_without_collapsing_to_single() {
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/bond-semantics.sdf");
+    let output = molchemist()
+        .args(["dump", fixture.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "bond semantics dump failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("#import \"@preview/cetz:0.5.2\""));
+    for function in [
+        "_molchemist-aromatic(",
+        "_molchemist-single-or-double(",
+        "_molchemist-single-or-aromatic(",
+        "_molchemist-double-or-aromatic(",
+        "_molchemist-wavy(",
+        "_molchemist-coordination-right(",
+        "_molchemist-hydrogen(",
+    ] {
+        assert!(stdout.contains(function), "missing {function}");
+    }
+}
+
+#[test]
 fn reads_direct_text_with_an_explicit_format() {
     let output = molchemist()
         .args([
@@ -259,13 +289,12 @@ fn rejects_invalid_smiles_without_polluting_stdout() {
 fn generated_standalone_document_compiles_with_typst() {
     let source = temp_path("compile.typ");
     let pdf = source.with_extension("pdf");
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bond-semantics.sdf");
     let generated = molchemist()
         .args([
             "dump",
-            "--smiles",
-            "CC(=O)O",
-            "--mode",
-            "skeletal",
+            fixture.to_str().unwrap(),
             "--standalone",
             "--output",
             source.to_str().unwrap(),
@@ -350,6 +379,34 @@ fn local_typst_package_renders_and_annotates_multiple_components() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixture = root.join("crates/molchemist-cli/tests/fixtures/multicomponent-rendering.typ");
     let pdf = temp_path("multicomponent-rendering").with_extension("pdf");
+
+    let compiled = Command::new("typst")
+        .current_dir(&root)
+        .args([
+            "compile",
+            fixture.to_str().unwrap(),
+            pdf.to_str().unwrap(),
+            "--root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        compiled.status.success(),
+        "Typst failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(pdf.exists());
+    fs::remove_file(pdf).unwrap();
+}
+
+#[test]
+#[ignore = "requires Typst and the alchemist package"]
+fn local_typst_package_renders_extended_bond_semantics() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = root.join("crates/molchemist-cli/tests/fixtures/bond-semantics-fidelity.typ");
+    let pdf = temp_path("bond-semantics-fidelity").with_extension("pdf");
 
     let compiled = Command::new("typst")
         .current_dir(&root)

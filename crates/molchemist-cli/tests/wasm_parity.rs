@@ -58,6 +58,16 @@ fn typst_and_cli_outputs_match_exactly() {
         .unwrap();
     assert_eq!(wasm.get("sdf").unwrap(), &cli, "SDF parity failed");
 
+    let bond_semantics = include_str!("fixtures/bond-semantics.sdf");
+    let cli = generator
+        .sdf_to_code(bond_semantics, RenderMode::Full, "3em", 2)
+        .unwrap();
+    assert_eq!(
+        wasm.get("bond-semantics").unwrap(),
+        &cli,
+        "extended SDF bond parity failed"
+    );
+
     for (name, smiles, mode) in cases {
         let cli = generator.smiles_to_code(smiles, mode, "3em", 2).unwrap();
         assert_eq!(wasm.get(name).unwrap(), &cli, "parity failed for {name}");
