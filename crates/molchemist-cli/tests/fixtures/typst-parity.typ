@@ -28,5 +28,8 @@
   charged: dump-smiles("OCCc1c(C)[n+](=cs1)Cc2cnc(C)nc(N)2", "abbreviate"),
   chiral: dump-smiles("N[C@@H](C)C(=O)O", "full"),
   ez: dump-smiles("F/C=C\\F", "skeletal"),
+  isotope-map: dump-smiles("[13CH3:7]C", "abbreviate"),
+  charged-carbon: dump-smiles("[CH2-]C", "skeletal"),
+  wildcard: dump-smiles("*", "skeletal"),
   complex: dump-smiles("CC[C@@H]([C@@H]1[C@H](C[C@@](O1)(CC)[C@H]2CC[C@@]([C@@H](O2)C)(CC)O)C)C(=O)[C@@H](C)[C@H]([C@H](C)CCC3=C(C=C(C(=C3C(=O)O)O)C)Br)O", "abbreviate"),
 )) <parity>
