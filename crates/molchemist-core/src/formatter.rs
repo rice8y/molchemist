@@ -4,6 +4,84 @@ use crate::{AtomLabel, Command, LinkData};
 
 pub const DEFAULT_ALCHEMIST_IMPORT: &str = "@preview/alchemist:0.2.0";
 
+const EXTENDED_BOND_DEFINITIONS: &str = r#"#import "@preview/cetz:0.5.2"
+
+#let _molchemist-dashed-stroke(stroke, dash) = {
+  if stroke == none or stroke == auto {
+    stroke
+  } else if type(stroke) == dictionary {
+    stroke + (dash: dash)
+  } else if type(stroke) == color {
+    (paint: stroke, dash: dash)
+  } else if type(stroke) == length {
+    (thickness: stroke, dash: dash)
+  } else {
+    (paint: stroke.paint, thickness: stroke.thickness, dash: dash)
+  }
+}
+
+#let _molchemist-partial-double(dash) = build-link((length, ctx, cetz-ctx, args) => {
+  let args = args
+  let offset = args.at("offset", default: ctx.config.double.offset)
+  let key = if offset == "left" { "stroke-left" } else { "stroke-right" }
+  let stroke = args.at(key, default: args.at("stroke", default: ctx.config.double.stroke))
+  args.insert(key, _molchemist-dashed-stroke(stroke, dash))
+  (double(..args).first().draw)(length, ctx, cetz-ctx)
+})
+
+#let _molchemist-dashed-single(dash) = build-link((length, ctx, cetz-ctx, args) => {
+  let args = args
+  let stroke = args.at("stroke", default: ctx.config.single.stroke)
+  args.insert("stroke", _molchemist-dashed-stroke(stroke, dash))
+  (single(..args).first().draw)(length, ctx, cetz-ctx)
+})
+
+#let _molchemist-dashed-double = build-link((length, ctx, cetz-ctx, args) => {
+  let args = args
+  let stroke = args.at("stroke", default: ctx.config.double.stroke)
+  args.insert("stroke-left", _molchemist-dashed-stroke(args.at("stroke-left", default: stroke), "dashed"))
+  args.insert("stroke-right", _molchemist-dashed-stroke(args.at("stroke-right", default: stroke), "dashed"))
+  (double(..args).first().draw)(length, ctx, cetz-ctx)
+})
+
+#let _molchemist-wavy = build-link((length, ctx, _, args) => {
+  import cetz.draw: *
+  cetz.decorations.wave(
+    line((0, 0), (length, 0), stroke: none),
+    segments: 8,
+    amplitude: .12,
+    stroke: args.at("stroke", default: ctx.config.single.stroke),
+  )
+})
+
+#let _molchemist-coordination-right = build-link((length, ctx, _, args) => {
+  import cetz.draw: *
+  line(
+    (0, 0),
+    (length, 0),
+    stroke: args.at("stroke", default: ctx.config.single.stroke),
+    mark: (end: ">"),
+  )
+})
+
+#let _molchemist-coordination-left = build-link((length, ctx, _, args) => {
+  import cetz.draw: *
+  line(
+    (0, 0),
+    (length, 0),
+    stroke: args.at("stroke", default: ctx.config.single.stroke),
+    mark: (start: ">"),
+  )
+})
+
+#let _molchemist-aromatic = _molchemist-partial-double("dashed")
+#let _molchemist-single-or-double = _molchemist-partial-double("dotted")
+#let _molchemist-single-or-aromatic = _molchemist-dashed-single("dashed")
+#let _molchemist-double-or-aromatic = _molchemist-dashed-double
+#let _molchemist-hydrogen = _molchemist-dashed-single("dotted")
+
+"#;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StandaloneOptions {
     pub alchemist_import: String,
@@ -20,7 +98,11 @@ impl Default for StandaloneOptions {
 }
 
 pub fn format_alchemist(commands: &[Command], base_sep: &str, indent_width: usize) -> String {
-    let mut output = format!("#let base-sep = {base_sep}\n#skeletize({{\n");
+    let mut output = format!("#let base-sep = {base_sep}\n");
+    if has_extended_bonds(commands) {
+        output.push_str(EXTENDED_BOND_DEFINITIONS);
+    }
+    output.push_str("#skeletize({\n");
     format_commands(&mut output, commands, 1, indent_width);
     output.push_str("})");
     output
@@ -102,7 +184,8 @@ fn format_commands(output: &mut String, commands: &[Command], depth: usize, inde
                 let length_scale = typst_number(*length_scale);
                 write!(
                     output,
-                    "{indent}{bond_type}(absolute: {angle}deg, atom-sep: base-sep * {length_scale}"
+                    "{indent}{}(absolute: {angle}deg, atom-sep: base-sep * {length_scale}",
+                    bond_function_name(bond_type),
                 )
                 .unwrap();
                 if let Some(offset) = offset {
@@ -200,7 +283,7 @@ fn format_links(links: &[LinkData], depth: usize, indent_width: usize) -> String
             output,
             "{item_indent}\"{}\": {}(absolute: {}deg, atom-sep: base-sep * {}",
             escape_string(&link.target),
-            link.bond_type,
+            bond_function_name(&link.bond_type),
             angle,
             length_scale,
         )
@@ -215,6 +298,46 @@ fn format_links(links: &[LinkData], depth: usize, indent_width: usize) -> String
     }
     write!(output, "{indent})").unwrap();
     output
+}
+
+fn has_extended_bonds(commands: &[Command]) -> bool {
+    commands.iter().any(|command| match command {
+        Command::Fragment { links, .. } => {
+            links.iter().any(|link| is_extended_bond(&link.bond_type))
+        }
+        Command::Bond { bond_type, .. } => is_extended_bond(bond_type),
+        Command::Branch { body } => has_extended_bonds(body),
+        Command::ComponentBreak => false,
+    })
+}
+
+fn is_extended_bond(bond_type: &str) -> bool {
+    matches!(
+        bond_type,
+        "aromatic"
+            | "single-or-double"
+            | "single-or-aromatic"
+            | "double-or-aromatic"
+            | "any"
+            | "either"
+            | "coordination-right"
+            | "coordination-left"
+            | "hydrogen"
+    )
+}
+
+fn bond_function_name(bond_type: &str) -> &str {
+    match bond_type {
+        "aromatic" => "_molchemist-aromatic",
+        "single-or-double" => "_molchemist-single-or-double",
+        "single-or-aromatic" => "_molchemist-single-or-aromatic",
+        "double-or-aromatic" => "_molchemist-double-or-aromatic",
+        "any" | "either" => "_molchemist-wavy",
+        "coordination-right" => "_molchemist-coordination-right",
+        "coordination-left" => "_molchemist-coordination-left",
+        "hydrogen" => "_molchemist-hydrogen",
+        bond_type => bond_type,
+    }
 }
 
 fn typst_number(value: f64) -> String {
@@ -366,6 +489,50 @@ mod tests {
                 "})",
             )
         );
+    }
+
+    #[test]
+    fn extended_bonds_emit_self_contained_typst_helpers() {
+        let commands = vec![
+            Command::Fragment {
+                element: "C".to_string(),
+                name: "a0".to_string(),
+                links: vec![LinkData {
+                    target: "a2".to_string(),
+                    name: "b1".to_string(),
+                    bond_type: "any".to_string(),
+                    angle: 180.0,
+                    offset: None,
+                    length_scale: 1.0,
+                }],
+                atom: None,
+                annotation: None,
+            },
+            Command::Bond {
+                name: "b0".to_string(),
+                bond_type: "aromatic".to_string(),
+                angle: 0.0,
+                offset: Some("left".to_string()),
+                length_scale: 1.0,
+            },
+            Command::Branch {
+                body: vec![Command::Bond {
+                    name: "b2".to_string(),
+                    bond_type: "coordination-left".to_string(),
+                    angle: 90.0,
+                    offset: None,
+                    length_scale: 1.0,
+                }],
+            },
+        ];
+
+        let output = format_alchemist(&commands, "3em", 2);
+
+        assert_eq!(output.matches("#import \"@preview/cetz:0.5.2\"").count(), 1);
+        assert!(output.contains("#let _molchemist-wavy = build-link"));
+        assert!(output.contains("\"a2\": _molchemist-wavy("));
+        assert!(output.contains("_molchemist-aromatic(absolute: 0deg"));
+        assert!(output.contains("_molchemist-coordination-left(absolute: 90deg"));
     }
 
     #[test]
