@@ -119,6 +119,8 @@
       b-func(..args)
     } else if cmd.type == "branch" {
       branch(_render-ast(cmd.body, base-sep, config: config))
+    } else if cmd.type == "component-break" {
+      operator(none, margin: base-sep * 0.5)
     }
   }
 }

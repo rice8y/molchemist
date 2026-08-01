@@ -58,6 +58,12 @@ molchemist dump compounds.sdf --record 3
 
 Each selected Molfile/SDF record is detected as V2000 or V3000. Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers are reported as conversion errors.
 
+Disconnected Molfile/SDF graphs and dot-separated SMILES retain every component. Generated Alchemist source places components side by side with a neutral `operator(none, ...)` boundary:
+
+```sh
+molchemist dump --smiles '[Na+].[Cl-]' --mode abbreviate
+```
+
 The three rendering modes match the Typst API:
 
 - `full` draws every atom represented by the conversion pipeline.

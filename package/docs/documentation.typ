@@ -115,6 +115,8 @@ Molfile/SDF records are detected as V2000 or V3000 automatically. When one SDF c
 
 SMILES is useful for compact inline examples or generated documents. Because SMILES stores connectivity rather than drawing coordinates, `molchemist` first computes a 2D layout and then renders the structure.
 
+Dot-separated SMILES and disconnected Molfile/SDF graphs keep every component and place them side by side without inserting a visible operator. Atom and bond indices remain global across the complete input, so #arg[show-indices] and annotation anchors work across component boundaries. Isolated hydrogen and carbon-only components also remain visible in abbreviated and skeletal modes.
+
 #example(```typ
 #render-smiles(
   "CCC1=C(N=C2C=CC=C(N2C1=O)C)C",
