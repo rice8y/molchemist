@@ -111,7 +111,50 @@ fn selects_a_one_based_record_from_sdf() {
         String::from_utf8_lossy(&second.stderr)
     );
     assert_ne!(first.stdout, second.stdout);
+
+    let missing = molchemist()
+        .args(["dump", path.to_str().unwrap(), "--record", "3"])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert!(String::from_utf8(missing.stderr)
+        .unwrap()
+        .contains("SDF record 3 does not exist; input contains 2 record(s)"));
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn auto_detects_and_dumps_v3000_input() {
+    let v3000 = concat!(
+        "charged\n",
+        "  molchemist\n",
+        "\n",
+        "  0  0  0     0  0            999 V3000\n",
+        "M  V30 BEGIN CTAB\n",
+        "M  V30 COUNTS 2 1 0 0 0\n",
+        "M  V30 BEGIN ATOM\n",
+        "M  V30 1 N 0.0000 0.0000 0.0000 0 CHG=1\n",
+        "M  V30 2 O 1.5000 0.0000 0.0000 0 CHG=-1\n",
+        "M  V30 END ATOM\n",
+        "M  V30 BEGIN BOND\n",
+        "M  V30 1 1 1 2\n",
+        "M  V30 END BOND\n",
+        "M  V30 END CTAB\n",
+        "M  END\n",
+    );
+    let output = molchemist()
+        .args(["dump", "--text", v3000, "--mode", "abbreviate"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "V3000 input failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("fragment(\"N^+\""));
+    assert!(stdout.contains("fragment(\"O^-\""));
 }
 
 #[test]
@@ -236,6 +279,34 @@ fn local_typst_package_renders_atom_metadata() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixture = root.join("crates/molchemist-cli/tests/fixtures/atom-metadata.typ");
     let pdf = temp_path("atom-metadata").with_extension("pdf");
+
+    let compiled = Command::new("typst")
+        .current_dir(&root)
+        .args([
+            "compile",
+            fixture.to_str().unwrap(),
+            pdf.to_str().unwrap(),
+            "--root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        compiled.status.success(),
+        "Typst failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(pdf.exists());
+    fs::remove_file(pdf).unwrap();
+}
+
+#[test]
+#[ignore = "requires Typst and the alchemist package"]
+fn local_typst_package_selects_sdf_records_and_renders_v3000() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = root.join("crates/molchemist-cli/tests/fixtures/sdf-input-fidelity.typ");
+    let pdf = temp_path("sdf-input-fidelity").with_extension("pdf");
 
     let compiled = Command::new("typst")
         .current_dir(&root)

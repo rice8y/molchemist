@@ -111,6 +111,8 @@ The examples below assume this import unless they need an additional package suc
 
 On Typst 0.15.0 and later, @cmd:render-mol[-] can also receive `path("molecule.sdf")` directly. This manual keeps using `read(...)` in examples for compatibility with older Typst versions.
 
+Molfile/SDF records are detected as V2000 or V3000 automatically. When one SDF contains multiple structures, pass the one-based #arg[record] option, for example `render-mol(sdf-data, record: 2)`. Missing records, empty structures, and malformed coordinate data report an error instead of producing an empty drawing.
+
 SMILES is useful for compact inline examples or generated documents. Because SMILES stores connectivity rather than drawing coordinates, `molchemist` first computes a 2D layout and then renders the structure.
 
 #example(```typ
@@ -814,7 +816,7 @@ With #arg[dump], `molchemist` returns generated `alchemist` source instead of a 
 
 For scripts and editor workflows, install the `molchemist-cli` crate with `cargo install --locked molchemist-cli`. Its `molchemist dump` command accepts Molfile, SDF, or SMILES input and writes the same formatted source as #arg[dump] to standard output. Add `--standalone` to include the current `alchemist` import and an auto-sized page, or `--output figure.typ` to write directly to a file.
 
-For example, `molchemist dump molecule.sdf > molecule.typ` ejects an SDF structure. For SMILES, use `molchemist dump --smiles "CC(=O)O" --mode skeletal`; adding `--standalone --output acetic-acid.typ` creates a complete Typst document.
+For example, `molchemist dump molecule.sdf > molecule.typ` ejects an SDF structure, while `molchemist dump structures.sdf --record 2` selects its second record. For SMILES, use `molchemist dump --smiles "CC(=O)O" --mode skeletal`; adding `--standalone --output acetic-acid.typ` creates a complete Typst document.
 
 = Publication Guidance
 

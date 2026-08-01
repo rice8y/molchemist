@@ -8,6 +8,15 @@ pub fn sdf_to_ast(sdf_data: &[u8], options: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[wasm_func]
+pub fn sdf_record_to_ast(
+    sdf_data: &[u8],
+    options: &[u8],
+    record: &[u8],
+) -> Result<Vec<u8>, String> {
+    molchemist_core::sdf_record_to_ast(sdf_data, options, parse_record(record)?)
+}
+
+#[wasm_func]
 pub fn smiles_to_layout_input(smiles_data: &[u8]) -> Result<Vec<u8>, String> {
     molchemist_core::smiles_to_layout_input(smiles_data)
 }
@@ -37,6 +46,22 @@ pub fn sdf_to_code(
     let base_sep = std::str::from_utf8(base_sep).map_err(|error| error.to_string())?;
     let indent = parse_indent(indent)?;
     let commands = molchemist_core::sdf_to_commands(sdf, render_mode(options))?;
+    Ok(molchemist_core::format_alchemist(&commands, base_sep, indent).into_bytes())
+}
+
+#[wasm_func]
+pub fn sdf_record_to_code(
+    sdf_data: &[u8],
+    options: &[u8],
+    record: &[u8],
+    base_sep: &[u8],
+    indent: &[u8],
+) -> Result<Vec<u8>, String> {
+    let sdf = std::str::from_utf8(sdf_data).map_err(|error| error.to_string())?;
+    let base_sep = std::str::from_utf8(base_sep).map_err(|error| error.to_string())?;
+    let indent = parse_indent(indent)?;
+    let commands =
+        molchemist_core::sdf_record_to_commands(sdf, render_mode(options), parse_record(record)?)?;
     Ok(molchemist_core::format_alchemist(&commands, base_sep, indent).into_bytes())
 }
 
@@ -72,5 +97,17 @@ fn parse_indent(indent: &[u8]) -> Result<usize, String> {
         Ok(indent)
     } else {
         Err("Indent width must be from 1 through 8".to_string())
+    }
+}
+
+fn parse_record(record: &[u8]) -> Result<usize, String> {
+    let record = std::str::from_utf8(record).map_err(|error| error.to_string())?;
+    let record = record
+        .parse::<usize>()
+        .map_err(|_| "SDF record number must be a positive integer".to_string())?;
+    if record == 0 {
+        Err("SDF record numbers are one-based".to_string())
+    } else {
+        Ok(record)
     }
 }

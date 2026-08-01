@@ -2,7 +2,7 @@ use crate::{
     parse as parse_smiles, AtomSymbol, BondType as SmilesBondType, Chirality as SmilesChirality,
     Molecule as SmilesMolecule,
 };
-use sdfrust::{parse_sdf_string, BondOrder};
+use sdfrust::{parse_sdf_auto_string, BondOrder, BondStereo, SdfFormat};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 const LAYOUT_MAGIC: &[u8; 4] = b"MCG2";
@@ -197,16 +197,114 @@ struct CoordPayload {
 }
 
 pub fn sdf_to_ast(sdf_data: &[u8], options: &[u8]) -> Result<Vec<u8>, String> {
+    sdf_record_to_ast(sdf_data, options, 1)
+}
+
+pub fn sdf_record_to_ast(
+    sdf_data: &[u8],
+    options: &[u8],
+    record: usize,
+) -> Result<Vec<u8>, String> {
     let sdf_str = std::str::from_utf8(sdf_data).map_err(|e| e.to_string())?;
-    let commands = sdf_to_commands(sdf_str, mode_from_options(options))?;
+    let commands = sdf_record_to_commands(sdf_str, mode_from_options(options), record)?;
     commands_to_cbor(&commands)
 }
 
 pub fn sdf_to_commands(sdf: &str, mode: RenderMode) -> Result<Vec<Command>, String> {
-    let mol = parse_sdf_string(sdf).map_err(|e| e.to_string())?;
-    let stereo_map = extract_stereo(sdf);
-    let render_mol = render_mol_from_sdf(&mol, sdf);
+    sdf_record_to_commands(sdf, mode, 1)
+}
+
+pub fn sdf_record_to_commands(
+    sdf: &str,
+    mode: RenderMode,
+    record: usize,
+) -> Result<Vec<Command>, String> {
+    let record_sdf = select_sdf_record(sdf, record)?;
+    let mol = parse_sdf_auto_string(record_sdf)
+        .map_err(|error| format!("could not parse SDF record {record}: {error}"))?;
+    validate_sdf_molecule(&mol, record)?;
+    let stereo_map = extract_sdf_stereo(&mol);
+    let render_mol = render_mol_from_sdf(&mol, record_sdf);
     Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
+}
+
+fn select_sdf_record(sdf: &str, record: usize) -> Result<&str, String> {
+    if record == 0 {
+        return Err("SDF record numbers are one-based".to_string());
+    }
+    if sdf.trim().is_empty() {
+        return Err("SDF input is empty".to_string());
+    }
+
+    let records = split_sdf_records(sdf);
+    let selected = records.get(record - 1).copied().ok_or_else(|| {
+        format!(
+            "SDF record {record} does not exist; input contains {} record(s)",
+            records.len()
+        )
+    })?;
+    if selected.trim().is_empty() {
+        return Err(format!("SDF record {record} is empty"));
+    }
+    Ok(selected)
+}
+
+fn split_sdf_records(sdf: &str) -> Vec<&str> {
+    let mut records = Vec::new();
+    let mut record_start = 0;
+    let mut offset = 0;
+
+    for line_with_ending in sdf.split_inclusive('\n') {
+        let line = line_with_ending.trim_end_matches(&['\r', '\n'][..]);
+        if line.trim() == "$$$$" {
+            records.push(&sdf[record_start..offset]);
+            record_start = offset + line_with_ending.len();
+        }
+        offset += line_with_ending.len();
+    }
+
+    if record_start < sdf.len() {
+        let trailing = &sdf[record_start..];
+        if !trailing.trim().is_empty() || records.is_empty() {
+            records.push(trailing);
+        }
+    } else if records.is_empty() {
+        records.push(sdf);
+    }
+
+    records
+}
+
+fn validate_sdf_molecule(mol: &sdfrust::Molecule, record: usize) -> Result<(), String> {
+    if mol.atoms.is_empty() {
+        return Err(format!("SDF record {record} contains no atoms"));
+    }
+
+    for (index, atom) in mol.atoms.iter().enumerate() {
+        if atom.element.trim().is_empty() {
+            return Err(format!(
+                "SDF record {record} atom {} has no element symbol",
+                index + 1
+            ));
+        }
+        if !atom.x.is_finite() || !atom.y.is_finite() || !atom.z.is_finite() {
+            return Err(format!(
+                "SDF record {record} atom {} has non-finite coordinates",
+                index + 1
+            ));
+        }
+    }
+
+    for (index, bond) in mol.bonds.iter().enumerate() {
+        if bond.atom1 >= mol.atoms.len() || bond.atom2 >= mol.atoms.len() {
+            return Err(format!(
+                "SDF record {record} bond {} refers to an atom outside the record",
+                index + 1
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 pub fn smiles_to_layout_input(smiles_data: &[u8]) -> Result<Vec<u8>, String> {
@@ -304,6 +402,16 @@ fn render_mol_from_sdf(mol: &sdfrust::Molecule, sdf: &str) -> RenderMol {
 
 fn extract_sdf_atom_metadata(sdf: &str, mol: &sdfrust::Molecule) -> Vec<SdfAtomMetadata> {
     let mut metadata = vec![SdfAtomMetadata::default(); mol.atoms.len()];
+    if mol.format_version == SdfFormat::V3000 {
+        for (metadata, atom) in metadata.iter_mut().zip(&mol.atoms) {
+            metadata.isotope = u16::try_from(atom.mass_difference)
+                .ok()
+                .filter(|&mass| mass > 0);
+        }
+        extract_v3000_atom_metadata(sdf, &mut metadata);
+        return metadata;
+    }
+
     let lines = sdf.lines().collect::<Vec<_>>();
     let Some(counts_line) = lines.get(3) else {
         return metadata;
@@ -370,6 +478,72 @@ fn extract_sdf_atom_metadata(sdf: &str, mol: &sdfrust::Molecule) -> Vec<SdfAtomM
     }
 
     metadata
+}
+
+fn extract_v3000_atom_metadata(sdf: &str, metadata: &mut [SdfAtomMetadata]) {
+    let mut in_atom_block = false;
+    let mut atom_index = 0;
+
+    for line in v3000_logical_lines(sdf) {
+        if line == "BEGIN ATOM" {
+            in_atom_block = true;
+            continue;
+        }
+        if line == "END ATOM" {
+            break;
+        }
+        if !in_atom_block {
+            continue;
+        }
+
+        let Some(atom_metadata) = metadata.get_mut(atom_index) else {
+            break;
+        };
+        atom_index += 1;
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        atom_metadata.atom_map = parts
+            .get(5)
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|&value| value > 0);
+
+        for part in parts.iter().skip(6) {
+            let Some((key, value)) = part.split_once('=') else {
+                continue;
+            };
+            match key {
+                "MASS" => {
+                    atom_metadata.isotope =
+                        value.parse::<u16>().ok().filter(|&isotope| isotope > 0);
+                }
+                "RAD" => {
+                    atom_metadata.radical = value.parse::<u8>().ok().filter(|&radical| radical > 0);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn v3000_logical_lines(sdf: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for line in sdf.lines() {
+        let Some(content) = line.strip_prefix("M  V30 ") else {
+            continue;
+        };
+        if let Some(content) = content.strip_suffix('-') {
+            current.push_str(content);
+        } else {
+            current.push_str(content);
+            lines.push(std::mem::take(&mut current));
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 fn nominal_isotope(element: &str) -> Option<i16> {
@@ -686,7 +860,10 @@ fn kekulize_aromatic_bonds(atom_count: usize, bonds: &mut [SmilesBond]) {
         let mut edge_indices = component_edges.into_iter().collect::<Vec<_>>();
         edge_indices.sort_unstable_by_key(|&bond_idx| {
             let bond = &bonds[bond_idx];
-            usize::MAX - (aromatic_adj[bond.atom1].len() + aromatic_adj[bond.atom2].len())
+            (
+                usize::MAX - (aromatic_adj[bond.atom1].len() + aromatic_adj[bond.atom2].len()),
+                bond_idx,
+            )
         });
 
         let mut used_atoms = vec![false; atom_count];
@@ -1056,37 +1233,17 @@ fn charge_suffix(charge: i8) -> String {
     }
 }
 
-fn extract_stereo(sdf_str: &str) -> HashMap<(usize, usize), (u8, bool)> {
+fn extract_sdf_stereo(mol: &sdfrust::Molecule) -> HashMap<(usize, usize), (u8, bool)> {
     let mut map = HashMap::new();
-    let mut lines = sdf_str.lines();
-
-    lines.next();
-    lines.next();
-    lines.next();
-
-    if let Some(counts_line) = lines.next() {
-        if counts_line.len() >= 6 {
-            let num_atoms = counts_line[0..3].trim().parse::<usize>().unwrap_or(0);
-            let num_bonds = counts_line[3..6].trim().parse::<usize>().unwrap_or(0);
-
-            for _ in 0..num_atoms {
-                lines.next();
-            }
-
-            for _ in 0..num_bonds {
-                if let Some(bond_line) = lines.next() {
-                    if bond_line.len() >= 12 {
-                        let a1 = bond_line[0..3].trim().parse::<usize>().unwrap_or(0);
-                        let a2 = bond_line[3..6].trim().parse::<usize>().unwrap_or(0);
-                        let stereo = bond_line[9..12].trim().parse::<u8>().unwrap_or(0);
-
-                        if a1 > 0 && a2 > 0 && (stereo == 1 || stereo == 6) {
-                            map.insert((a1 - 1, a2 - 1), (stereo, true));
-                            map.insert((a2 - 1, a1 - 1), (stereo, false));
-                        }
-                    }
-                }
-            }
+    for bond in &mol.bonds {
+        let stereo = match bond.stereo {
+            BondStereo::Up => 1,
+            BondStereo::Down => 6,
+            BondStereo::None | BondStereo::Either => continue,
+        };
+        if bond.atom1 < mol.atoms.len() && bond.atom2 < mol.atoms.len() {
+            map.insert((bond.atom1, bond.atom2), (stereo, true));
+            map.insert((bond.atom2, bond.atom1), (stereo, false));
         }
     }
     map
@@ -1512,6 +1669,24 @@ mod tests {
         }
     }
 
+    const CARBON_V2000: &str = concat!(
+        "carbon\n",
+        "  molchemist\n",
+        "\n",
+        "  1  0  0  0  0  0  0  0  0  0999 V2000\n",
+        "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "M  END\n",
+    );
+
+    const OXYGEN_V2000: &str = concat!(
+        "oxygen\n",
+        "  molchemist\n",
+        "\n",
+        "  1  0  0  0  0  0  0  0  0  0999 V2000\n",
+        "    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "M  END\n",
+    );
+
     #[test]
     fn smiles_payload_keeps_basic_connectivity() {
         let payload = smiles_to_layout_input(b"CCO").unwrap();
@@ -1563,6 +1738,79 @@ mod tests {
         let (_, atom) = first_fragment(&commands);
 
         assert_eq!(atom.unwrap().isotope, Some(13));
+    }
+
+    #[test]
+    fn sdf_auto_detects_v3000_and_preserves_atom_metadata() {
+        let sdf = concat!(
+            "v3000 metadata\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 2 1 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 1 U 0.0000 0.0000 0.0000 7 CHG=1 MASS=238 RAD=2\n",
+            "M  V30 2 O 1.5000 0.0000 0.0000 0 CHG=-1\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 1 2 CFG=1\n",
+            "M  V30 END BOND\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        let (label, atom) = first_fragment(&commands);
+        let atom = atom.unwrap();
+
+        assert_eq!(label, "U^+");
+        assert_eq!(atom.symbol, "U");
+        assert_eq!(atom.charge, 1);
+        assert_eq!(atom.isotope, Some(238));
+        assert_eq!(atom.radical, Some(2));
+        assert_eq!(atom.atom_map, Some(7));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Bond { bond_type, .. } if bond_type.starts_with("cram-filled")
+        )));
+    }
+
+    #[test]
+    fn sdf_record_selection_is_one_based_and_format_independent() {
+        let sdf = format!("{CARBON_V2000}$$$$\r\n{OXYGEN_V2000}$$$$\r\n\r\n");
+
+        let commands = sdf_record_to_commands(&sdf, RenderMode::Full, 2).unwrap();
+        assert_eq!(first_fragment(&commands).0, "O");
+        assert_eq!(
+            sdf_record_to_commands(&sdf, RenderMode::Full, 0).unwrap_err(),
+            "SDF record numbers are one-based"
+        );
+        assert_eq!(
+            sdf_record_to_commands(&sdf, RenderMode::Full, 3).unwrap_err(),
+            "SDF record 3 does not exist; input contains 2 record(s)"
+        );
+    }
+
+    #[test]
+    fn sdf_rejects_empty_structures_and_non_finite_coordinates() {
+        let empty = concat!(
+            "empty\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0  0  0  0  0  0  0  0999 V2000\n",
+            "M  END\n",
+        );
+        assert_eq!(
+            sdf_to_commands(empty, RenderMode::Full).unwrap_err(),
+            "SDF record 1 contains no atoms"
+        );
+
+        let non_finite = CARBON_V2000.replacen("    0.0000", "       NaN", 1);
+        assert_eq!(
+            sdf_to_commands(&non_finite, RenderMode::Full).unwrap_err(),
+            "SDF record 1 atom 1 has non-finite coordinates"
+        );
     }
 
     #[test]
@@ -1627,6 +1875,10 @@ mod tests {
         assert_eq!(bonds.len(), 6);
         assert_eq!(double_count, 3);
         assert_eq!(single_count, 3);
+        assert_eq!(
+            bonds.iter().map(|(_, _, order)| *order).collect::<Vec<_>>(),
+            vec![2, 1, 2, 1, 2, 1]
+        );
     }
 
     #[test]

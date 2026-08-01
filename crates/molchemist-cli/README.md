@@ -56,6 +56,8 @@ For a multi-record SDF, select a one-based record with `--record`:
 molchemist dump compounds.sdf --record 3
 ```
 
+Each selected Molfile/SDF record is detected as V2000 or V3000. Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers are reported as conversion errors.
+
 The three rendering modes match the Typst API:
 
 - `full` draws every atom represented by the conversion pipeline.

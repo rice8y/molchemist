@@ -785,6 +785,7 @@
 /// `path`; earlier versions should pass the result of `read`.
 ///
 /// - data (any): Molfile/SDF text, bytes, or a Typst 0.15.0+ path.
+/// - record (int): One-based record number for multi-record SDF input.
 /// - abbreviate (bool): Fold common hydrogens and terminal groups into labels.
 /// - skeletal (bool): Draw a skeletal formula; overrides `abbreviate`.
 /// - dump (bool): Show generated Alchemist source instead of rendering.
@@ -792,7 +793,11 @@
 /// - annotations (dictionary, array, none): Overlay annotation or annotation array.
 /// - show-indices (bool, str): Show `"atoms"`, `"bonds"`, or `"all"` indices for authoring.
 /// -> content
-#let render-mol(data, abbreviate: false, skeletal: false, dump: false, config: (:), annotations: none, show-indices: false) = {
+#let render-mol(data, record: 1, abbreviate: false, skeletal: false, dump: false, config: (:), annotations: none, show-indices: false) = {
+  if type(record) != int or record < 1 {
+    panic("record must be a positive integer")
+  }
+
   let mode = "full"
   if skeletal {
     mode = "skeletal"
@@ -802,12 +807,13 @@
 
   let base-sep = config.at("atom-sep", default: 3em)
   let mol-data = _mol-data-to-bytes(data)
+  let record-data = bytes(str(record))
 
   if dump {
-    let code = str(mol-plugin.sdf_to_code(mol-data, bytes(mode), bytes(repr(base-sep)), bytes("2")))
+    let code = str(mol-plugin.sdf_record_to_code(mol-data, bytes(mode), record-data, bytes(repr(base-sep)), bytes("2")))
     return raw(code, block: true, lang: "typst")
   } else {
-    let ast = cbor(mol-plugin.sdf_to_ast(mol-data, bytes(mode)))
+    let ast = cbor(mol-plugin.sdf_record_to_ast(mol-data, bytes(mode), record-data))
     _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
   }
 }
