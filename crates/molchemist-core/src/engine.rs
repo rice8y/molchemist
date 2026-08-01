@@ -1,5 +1,5 @@
 use crate::{
-    parse as parse_smiles, BondType as SmilesBondType, Chirality as SmilesChirality,
+    parse as parse_smiles, AtomSymbol, BondType as SmilesBondType, Chirality as SmilesChirality,
     Molecule as SmilesMolecule,
 };
 use sdfrust::{parse_sdf_string, BondOrder};
@@ -16,6 +16,8 @@ pub enum Command {
         element: String,
         name: String,
         links: Vec<LinkData>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        atom: Option<AtomLabel>,
         #[serde(skip_serializing_if = "Option::is_none")]
         annotation: Option<String>,
     },
@@ -43,6 +45,20 @@ pub struct LinkData {
     pub offset: Option<String>,
     #[serde(rename = "lengthScale")]
     pub length_scale: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AtomLabel {
+    pub symbol: String,
+    #[serde(rename = "hydrogenCount")]
+    pub hydrogen_count: u8,
+    pub charge: i8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub isotope: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub radical: Option<u8>,
+    #[serde(rename = "atomMap", skip_serializing_if = "Option::is_none")]
+    pub atom_map: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -88,6 +104,9 @@ struct RenderAtom {
     y: f64,
     hydrogens: u8,
     charge: i8,
+    isotope: Option<u16>,
+    radical: Option<u8>,
+    atom_map: Option<u32>,
     stereo_annotation: Option<String>,
 }
 
@@ -103,6 +122,19 @@ struct RenderMol {
     bonds: Vec<RenderBond>,
 }
 
+#[derive(Clone, Default)]
+struct SdfAtomMetadata {
+    isotope: Option<u16>,
+    radical: Option<u8>,
+    atom_map: Option<u32>,
+}
+
+#[derive(Clone, Default)]
+struct RenderLabel {
+    text: String,
+    atom: Option<AtomLabel>,
+}
+
 #[derive(Clone, Copy)]
 enum AtomStereoDirection {
     Clockwise,
@@ -115,6 +147,8 @@ struct SmilesAtom {
     atomic_number: u8,
     hydrogens: u8,
     charge: i8,
+    isotope: Option<u16>,
+    atom_map: Option<u32>,
     stereo: Option<AtomStereoSpec>,
     stereo_annotation: Option<String>,
 }
@@ -171,7 +205,7 @@ pub fn sdf_to_ast(sdf_data: &[u8], options: &[u8]) -> Result<Vec<u8>, String> {
 pub fn sdf_to_commands(sdf: &str, mode: RenderMode) -> Result<Vec<Command>, String> {
     let mol = parse_sdf_string(sdf).map_err(|e| e.to_string())?;
     let stereo_map = extract_stereo(sdf);
-    let render_mol = render_mol_from_sdf(&mol);
+    let render_mol = render_mol_from_sdf(&mol, sdf);
     Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
 }
 
@@ -232,16 +266,21 @@ fn commands_to_cbor(commands: &[Command]) -> Result<Vec<u8>, String> {
     Ok(buffer)
 }
 
-fn render_mol_from_sdf(mol: &sdfrust::Molecule) -> RenderMol {
+fn render_mol_from_sdf(mol: &sdfrust::Molecule, sdf: &str) -> RenderMol {
+    let metadata = extract_sdf_atom_metadata(sdf, mol);
     let atoms = mol
         .atoms
         .iter()
-        .map(|atom| RenderAtom {
+        .zip(metadata)
+        .map(|(atom, metadata)| RenderAtom {
             element: atom.element.clone(),
             x: atom.x,
             y: atom.y,
             hydrogens: 0,
-            charge: 0,
+            charge: atom.formal_charge,
+            isotope: metadata.isotope,
+            radical: atom.radical.or(metadata.radical),
+            atom_map: atom.atom_atom_mapping.or(metadata.atom_map),
             stereo_annotation: None,
         })
         .collect();
@@ -263,6 +302,111 @@ fn render_mol_from_sdf(mol: &sdfrust::Molecule) -> RenderMol {
     RenderMol { atoms, bonds }
 }
 
+fn extract_sdf_atom_metadata(sdf: &str, mol: &sdfrust::Molecule) -> Vec<SdfAtomMetadata> {
+    let mut metadata = vec![SdfAtomMetadata::default(); mol.atoms.len()];
+    let lines = sdf.lines().collect::<Vec<_>>();
+    let Some(counts_line) = lines.get(3) else {
+        return metadata;
+    };
+    let atom_count = counts_line
+        .get(0..3)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(metadata.len());
+
+    for (atom_idx, (metadata, atom)) in metadata
+        .iter_mut()
+        .zip(&mol.atoms)
+        .take(atom_count)
+        .enumerate()
+    {
+        let Some(line) = lines.get(4 + atom_idx) else {
+            break;
+        };
+
+        let mass_difference = line
+            .get(34..36)
+            .and_then(|value| value.trim().parse::<i16>().ok())
+            .unwrap_or(0);
+        if mass_difference != 0 {
+            metadata.isotope = nominal_isotope(&atom.element)
+                .and_then(|mass| mass.checked_add(mass_difference))
+                .and_then(|mass| u16::try_from(mass).ok());
+        }
+
+        let charge_code = line
+            .get(36..39)
+            .and_then(|value| value.trim().parse::<u8>().ok())
+            .unwrap_or(0);
+        if charge_code == 4 {
+            metadata.radical = Some(2);
+        }
+
+        metadata.atom_map = line
+            .get(60..63)
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|&value| value > 0);
+    }
+
+    for line in &lines {
+        if line.starts_with("M  END") || line.starts_with("$$$$") {
+            break;
+        } else if line.starts_with("M  ISO") {
+            for (atom_idx, value) in parse_mdl_property_pairs(line) {
+                if let (Some(atom), Ok(isotope)) =
+                    (metadata.get_mut(atom_idx), u16::try_from(value))
+                {
+                    atom.isotope = (isotope > 0).then_some(isotope);
+                }
+            }
+        } else if line.starts_with("M  RAD") {
+            for (atom_idx, value) in parse_mdl_property_pairs(line) {
+                if let (Some(atom), Ok(radical)) = (metadata.get_mut(atom_idx), u8::try_from(value))
+                {
+                    atom.radical = (radical > 0).then_some(radical);
+                }
+            }
+        }
+    }
+
+    metadata
+}
+
+fn nominal_isotope(element: &str) -> Option<i16> {
+    let element = element.parse::<AtomSymbol>().ok()?;
+    let mass = element.standard_mass();
+    (mass > 0.0 && mass.is_finite()).then_some(mass.round() as i16)
+}
+
+fn parse_mdl_property_pairs(line: &str) -> Vec<(usize, i32)> {
+    let count = line
+        .get(6..9)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut pairs = Vec::with_capacity(count);
+
+    for index in 0..count {
+        let start = 9 + index * 8;
+        let Some(atom_number) = line
+            .get(start..start + 4)
+            .and_then(|value| value.trim().parse::<usize>().ok())
+        else {
+            break;
+        };
+        let Some(value) = line
+            .get(start + 4..start + 8)
+            .and_then(|value| value.trim().parse::<i32>().ok())
+        else {
+            break;
+        };
+        if atom_number > 0 {
+            pairs.push((atom_number - 1, value));
+        }
+    }
+
+    pairs
+}
+
 fn render_mol_from_smiles(graph: &SmilesGraph, coords: &[(f32, f32)]) -> RenderMol {
     let atoms = graph
         .atoms
@@ -274,6 +418,9 @@ fn render_mol_from_smiles(graph: &SmilesGraph, coords: &[(f32, f32)]) -> RenderM
             y: y as f64,
             hydrogens: atom.hydrogens,
             charge: atom.charge,
+            isotope: atom.isotope,
+            radical: None,
+            atom_map: atom.atom_map,
             stereo_annotation: atom.stereo_annotation.clone(),
         })
         .collect::<Vec<_>>();
@@ -311,6 +458,8 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
                 atomic_number: 1,
                 hydrogens: 0,
                 charge: 0,
+                isotope: None,
+                atom_map: None,
                 stereo: None,
                 stereo_annotation: None,
             });
@@ -368,23 +517,23 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
         .enumerate()
         .map(|(atom_idx, node)| {
             let atomic_number = node.atom().element().atomic_number();
-            if atomic_number == 0 {
-                return Err(format!(
-                    "Unsupported atom '{}' for SMILES layout",
-                    node.atom().element()
-                ));
-            }
+            // Coordgen does not have a chemical atomic number for the SMILES
+            // wildcard. Carbon provides stable neutral geometry while the
+            // original `*` symbol remains in the rendering model.
+            let layout_atomic_number = if atomic_number == 0 { 6 } else { atomic_number };
 
-            Ok(SmilesAtom {
+            SmilesAtom {
                 element: node.atom().element().to_string(),
-                atomic_number,
+                atomic_number: layout_atomic_number,
                 hydrogens: node.hydrogens(),
                 charge: node.atom().charge(),
+                isotope: node.atom().isotope(),
+                atom_map: node.class().map(u32::from),
                 stereo: atom_stereo_spec(atom_idx, node.chirality(), &incident_bonds),
                 stereo_annotation: chirality_annotation(node.chirality()),
-            })
+            }
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
 
     let double_bond_stereo = build_double_bond_stereo_specs(&molecule, &original_to_graph);
 
@@ -796,8 +945,8 @@ fn build_labels(
     mode_str: &str,
     visited_nodes: &mut [bool],
     handled_bonds: &mut [bool],
-) -> Vec<String> {
-    let mut labels = vec![String::new(); mol.atoms.len()];
+) -> Vec<RenderLabel> {
+    let mut labels = vec![RenderLabel::default(); mol.atoms.len()];
 
     for i in 0..mol.atoms.len() {
         let atom = &mol.atoms[i];
@@ -816,30 +965,57 @@ fn build_labels(
             let total_h = atom.hydrogens + explicit_h_count;
             if atom.element == "C" {
                 if mode_str == "skeletal" {
-                    labels[i] = if atom.stereo_annotation.is_some() {
-                        atom.element.clone()
-                    } else {
-                        String::new()
-                    };
+                    if atom.stereo_annotation.is_some()
+                        || atom.charge != 0
+                        || has_visible_atom_metadata(atom)
+                    {
+                        labels[i] = render_label(atom, total_h);
+                    }
                 } else {
                     let heavy_atoms = adj[i].len().saturating_sub(explicit_h_count as usize);
-                    labels[i] = if heavy_atoms <= 1 && total_h > 0 {
-                        atom_label(&atom.element, total_h, atom.charge)
-                    } else if atom.stereo_annotation.is_some() || atom.charge != 0 {
-                        atom_label(&atom.element, 0, atom.charge)
+                    labels[i] = if (heavy_atoms <= 1 && total_h > 0)
+                        || atom.stereo_annotation.is_some()
+                        || atom.charge != 0
+                        || has_visible_atom_metadata(atom)
+                    {
+                        render_label(atom, total_h)
                     } else {
-                        String::new()
+                        RenderLabel::default()
                     };
                 }
             } else {
-                labels[i] = atom_label(&atom.element, total_h, atom.charge);
+                labels[i] = render_label(atom, total_h);
             }
         } else {
-            labels[i] = atom_label(&atom.element, 0, atom.charge);
+            labels[i] = render_label(atom, 0);
         }
     }
 
     labels
+}
+
+fn has_visible_atom_metadata(atom: &RenderAtom) -> bool {
+    atom.element == "*"
+        || atom.isotope.is_some()
+        || atom.radical.is_some()
+        || atom.atom_map.is_some()
+}
+
+fn render_label(atom: &RenderAtom, hydrogen_count: u8) -> RenderLabel {
+    let text = atom_label(&atom.element, hydrogen_count, atom.charge);
+    let structured = has_visible_atom_metadata(atom).then(|| AtomLabel {
+        symbol: atom.element.clone(),
+        hydrogen_count,
+        charge: atom.charge,
+        isotope: atom.isotope,
+        radical: atom.radical,
+        atom_map: atom.atom_map,
+    });
+
+    RenderLabel {
+        text,
+        atom: structured,
+    }
 }
 
 fn explicit_h_neighbors(
@@ -1106,7 +1282,7 @@ fn bond_func_name(
 struct DfsContext<'a> {
     adj: &'a [Vec<(usize, BondKind, usize)>],
     mol: &'a RenderMol,
-    labels: &'a [String],
+    labels: &'a [RenderLabel],
     stereo_map: &'a HashMap<(usize, usize), (u8, bool)>,
     rings: &'a [Vec<usize>],
     avg_length: f64,
@@ -1151,9 +1327,10 @@ fn dfs(
     }
 
     commands.push(Command::Fragment {
-        element: context.labels[u].clone(),
+        element: context.labels[u].text.clone(),
         name: format!("a{u}"),
         links,
+        atom: context.labels[u].atom.clone(),
         annotation: u_atom.stereo_annotation.clone(),
     });
 
@@ -1315,6 +1492,26 @@ mod tests {
         }
     }
 
+    fn coordinate_payload(points: &[(f32, f32)], bond_count: usize) -> Vec<u8> {
+        let mut coords = Vec::new();
+        coords.extend_from_slice(COORD_MAGIC);
+        coords.extend_from_slice(&(points.len() as u32).to_le_bytes());
+        coords.extend_from_slice(&(bond_count as u32).to_le_bytes());
+        for &(x, y) in points {
+            coords.extend_from_slice(&x.to_le_bytes());
+            coords.extend_from_slice(&y.to_le_bytes());
+        }
+        coords.extend(std::iter::repeat_n(0, bond_count));
+        coords
+    }
+
+    fn first_fragment(commands: &[Command]) -> (&str, Option<&AtomLabel>) {
+        match commands.first().unwrap() {
+            Command::Fragment { element, atom, .. } => (element, atom.as_ref()),
+            command => panic!("expected fragment, got {command:?}"),
+        }
+    }
+
     #[test]
     fn smiles_payload_keeps_basic_connectivity() {
         let payload = smiles_to_layout_input(b"CCO").unwrap();
@@ -1324,6 +1521,89 @@ mod tests {
         assert_eq!(bonds, vec![(0, 1, 1), (1, 2, 1)]);
         assert!(atom_stereo.is_empty());
         assert!(double_bond_stereo.is_empty());
+    }
+
+    #[test]
+    fn sdf_preserves_charge_isotope_radical_and_atom_map() {
+        let sdf = concat!(
+            "metadata\n",
+            "  molchemist\n",
+            "\n",
+            "  1  0  0  0  0  0  0  0  0  0999 V2000\n",
+            "    0.0000    0.0000    0.0000 C   0  3  0  0  0  0  0  0  0  7  0  0\n",
+            "M  ISO  1   1  13\n",
+            "M  RAD  1   1   2\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        let (label, atom) = first_fragment(&commands);
+        let atom = atom.unwrap();
+
+        assert_eq!(label, "C^+");
+        assert_eq!(atom.symbol, "C");
+        assert_eq!(atom.charge, 1);
+        assert_eq!(atom.isotope, Some(13));
+        assert_eq!(atom.radical, Some(2));
+        assert_eq!(atom.atom_map, Some(7));
+    }
+
+    #[test]
+    fn sdf_atom_block_mass_difference_becomes_an_isotope() {
+        let sdf = concat!(
+            "isotope\n",
+            "  molchemist\n",
+            "\n",
+            "  1  0  0  0  0  0  0  0  0  0999 V2000\n",
+            "    0.0000    0.0000    0.0000 C   1  0  0  0  0  0  0  0  0  0  0  0\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        let (_, atom) = first_fragment(&commands);
+
+        assert_eq!(atom.unwrap().isotope, Some(13));
+    }
+
+    #[test]
+    fn smiles_preserves_isotope_and_atom_class() {
+        let coords = coordinate_payload(&[(0.0, 0.0), (1.0, 0.0)], 1);
+        let commands =
+            smiles_to_commands_with_coords("[13CH3:7]C", &coords, RenderMode::Abbreviate).unwrap();
+        let (label, atom) = first_fragment(&commands);
+        let atom = atom.unwrap();
+
+        assert_eq!(label, "CH_3");
+        assert_eq!(atom.symbol, "C");
+        assert_eq!(atom.hydrogen_count, 3);
+        assert_eq!(atom.isotope, Some(13));
+        assert_eq!(atom.atom_map, Some(7));
+    }
+
+    #[test]
+    fn skeletal_mode_keeps_charged_carbon_visible() {
+        let coords = coordinate_payload(&[(0.0, 0.0), (1.0, 0.0)], 1);
+        let commands =
+            smiles_to_commands_with_coords("[CH2-]C", &coords, RenderMode::Skeletal).unwrap();
+        let (label, atom) = first_fragment(&commands);
+
+        assert_eq!(label, "CH_2^-");
+        assert!(atom.is_none());
+    }
+
+    #[test]
+    fn smiles_wildcard_uses_neutral_layout_surrogate_and_visible_label() {
+        let payload = smiles_to_layout_input(b"*").unwrap();
+        let (atoms, bonds, _, _) = decode_layout_input(&payload);
+        assert_eq!(atoms, vec![6]);
+        assert!(bonds.is_empty());
+
+        let coords = coordinate_payload(&[(0.0, 0.0)], 0);
+        let commands = smiles_to_commands_with_coords("*", &coords, RenderMode::Skeletal).unwrap();
+        let (label, atom) = first_fragment(&commands);
+
+        assert_eq!(label, "*");
+        assert_eq!(atom.unwrap().symbol, "*");
     }
 
     #[test]
@@ -1453,6 +1733,9 @@ mod tests {
             y,
             hydrogens: 0,
             charge: 0,
+            isotope: None,
+            radical: None,
+            atom_map: None,
             stereo_annotation: None,
         }
     }

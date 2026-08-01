@@ -18,6 +18,44 @@
   else { single }
 }
 
+#let _atom-charge-label(charge) = {
+  if charge == 0 { [] }
+  else if charge == 1 { [+] }
+  else if charge == -1 { [−] }
+  else if charge > 1 { [#(str(charge) + "+")] }
+  else { [#(str(calc.abs(charge)) + "−")] }
+}
+
+#let _atom-radical-label(radical) = {
+  if radical == none or radical == 0 { [] }
+  else if radical == 1 { [:] }
+  else if radical == 2 { [•] }
+  else if radical == 3 { [••] }
+  else { [#("rad" + str(radical))] }
+}
+
+#let _structured-atom-label(atom) = {
+  let base = [#atom.symbol]
+  let hydrogen-count = atom.at("hydrogenCount", default: 0)
+  if hydrogen-count == 1 {
+    base += [H]
+  } else if hydrogen-count > 1 {
+    base += math.attach([H], b: [#hydrogen-count])
+  }
+
+  let top-right = _atom-charge-label(atom.at("charge", default: 0))
+  top-right += _atom-radical-label(atom.at("radical", default: none))
+  let isotope = atom.at("isotope", default: none)
+  let atom-map = atom.at("atomMap", default: none)
+
+  math.equation(math.attach(
+    base,
+    tl: if isotope == none { none } else { [#isotope] },
+    tr: if top-right == [] { none } else { top-right },
+    br: if atom-map == none { none } else { [:#atom-map] },
+  ))
+}
+
 #let _render-ast(cmds, base-sep, config: (:)) = {
   for cmd in cmds {
     if cmd.type == "fragment" {
@@ -46,10 +84,15 @@
       }
 
       if cmd.element != "" {
+        let body = if "atom" in cmd {
+          _structured-atom-label(cmd.atom)
+        } else {
+          cmd.element
+        }
         if l-dict.len() > 0 {
           f-args.insert("links", l-dict)
         }
-        fragment(cmd.element, ..f-args)
+        fragment(body, ..f-args)
       } else {
         if cmd.name != "" {
           hook(cmd.name)

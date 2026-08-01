@@ -1,6 +1,6 @@
 use std::fmt::Write;
 
-use crate::{Command, LinkData};
+use crate::{AtomLabel, Command, LinkData};
 
 pub const DEFAULT_ALCHEMIST_IMPORT: &str = "@preview/alchemist:0.2.0";
 
@@ -52,6 +52,7 @@ fn format_commands(output: &mut String, commands: &[Command], depth: usize, inde
                 element,
                 name,
                 links,
+                atom,
                 ..
             } => {
                 let links_text = format_links(links, depth, indent_width);
@@ -64,7 +65,11 @@ fn format_commands(output: &mut String, commands: &[Command], depth: usize, inde
                         arguments.push(links_text);
                     }
 
-                    write!(output, "{indent}fragment(\"{}\"", escape_string(element)).unwrap();
+                    let body = atom.as_ref().map_or_else(
+                        || format!("\"{}\"", escape_string(element)),
+                        format_atom_label,
+                    );
+                    write!(output, "{indent}fragment({body}").unwrap();
                     if !arguments.is_empty() {
                         write!(output, ", {}", arguments.join(", ")).unwrap();
                     }
@@ -115,6 +120,66 @@ fn format_commands(output: &mut String, commands: &[Command], depth: usize, inde
             }
         }
     }
+}
+
+fn format_atom_label(atom: &AtomLabel) -> String {
+    let symbol = escape_content(&atom.symbol);
+    let base = match atom.hydrogen_count {
+        0 => format!("[{symbol}]"),
+        1 => format!("[{symbol}H]"),
+        count => format!("[{symbol}#math.attach([H], b: [{count}])]"),
+    };
+    let mut attachments = Vec::new();
+
+    if let Some(isotope) = atom.isotope {
+        attachments.push(format!("tl: [{isotope}]"));
+    }
+
+    let top_right = format!("{}{}", charge_text(atom.charge), radical_text(atom.radical));
+    if !top_right.is_empty() {
+        attachments.push(format!("tr: [{}]", escape_content(&top_right)));
+    }
+
+    if let Some(atom_map) = atom.atom_map {
+        attachments.push(format!("br: [:{atom_map}]"));
+    }
+
+    if attachments.is_empty() {
+        format!("math.equation(math.attach({base}))")
+    } else {
+        format!(
+            "math.equation(math.attach({base}, {}))",
+            attachments.join(", ")
+        )
+    }
+}
+
+fn charge_text(charge: i8) -> String {
+    match charge {
+        0 => String::new(),
+        1 => "+".to_string(),
+        -1 => "−".to_string(),
+        charge if charge > 1 => format!("{charge}+"),
+        charge => format!("{}−", charge.abs()),
+    }
+}
+
+fn radical_text(radical: Option<u8>) -> String {
+    match radical {
+        None | Some(0) => String::new(),
+        Some(1) => ":".to_string(),
+        Some(2) => "•".to_string(),
+        Some(3) => "••".to_string(),
+        Some(radical) => format!("rad{radical}"),
+    }
+}
+
+fn escape_content(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('#', "\\#")
+        .replace('*', "\\*")
+        .replace(']', "\\]")
 }
 
 fn format_links(links: &[LinkData], depth: usize, indent_width: usize) -> String {
@@ -176,6 +241,7 @@ mod tests {
                 element: "O".to_string(),
                 name: "a0".to_string(),
                 links: Vec::new(),
+                atom: None,
                 annotation: None,
             },
             Command::Bond {
@@ -197,6 +263,7 @@ mod tests {
                         offset: None,
                         length_scale: 1.0,
                     }],
+                    atom: None,
                     annotation: None,
                 }],
             },
@@ -236,6 +303,33 @@ mod tests {
         let code = "#skeletize({\n  fragment(\"O\")\n})";
         let output = format_standalone_code(code, &StandaloneOptions::default());
         assert!(output.ends_with(code));
+    }
+
+    #[test]
+    fn structured_atom_metadata_uses_math_attachments() {
+        let commands = vec![Command::Fragment {
+            element: "CH_3^+".to_string(),
+            name: "a0".to_string(),
+            links: Vec::new(),
+            atom: Some(AtomLabel {
+                symbol: "C".to_string(),
+                hydrogen_count: 3,
+                charge: 1,
+                isotope: Some(13),
+                radical: Some(2),
+                atom_map: Some(7),
+            }),
+            annotation: None,
+        }];
+
+        let output = format_alchemist(&commands, "3em", 2);
+
+        assert!(output.contains(concat!(
+            "fragment(math.equation(math.attach(",
+            "[C#math.attach([H], b: [3])], ",
+            "tl: [13], tr: [+•], br: [:7]",
+            ")), name: \"a0\")",
+        )));
     }
 
     #[test]

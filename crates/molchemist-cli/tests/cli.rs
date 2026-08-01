@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -226,5 +227,33 @@ fn generated_standalone_document_compiles_with_typst() {
     );
     assert!(pdf.exists());
     fs::remove_file(source).unwrap();
+    fs::remove_file(pdf).unwrap();
+}
+
+#[test]
+#[ignore = "requires Typst and the alchemist package"]
+fn local_typst_package_renders_atom_metadata() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = root.join("crates/molchemist-cli/tests/fixtures/atom-metadata.typ");
+    let pdf = temp_path("atom-metadata").with_extension("pdf");
+
+    let compiled = Command::new("typst")
+        .current_dir(&root)
+        .args([
+            "compile",
+            fixture.to_str().unwrap(),
+            pdf.to_str().unwrap(),
+            "--root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        compiled.status.success(),
+        "Typst failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(pdf.exists());
     fs::remove_file(pdf).unwrap();
 }

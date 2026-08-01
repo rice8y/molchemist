@@ -36,6 +36,9 @@ fn typst_and_cli_outputs_match_exactly() {
         ),
         ("chiral", "N[C@@H](C)C(=O)O", RenderMode::Full),
         ("ez", r"F/C=C\F", RenderMode::Skeletal),
+        ("isotope-map", "[13CH3:7]C", RenderMode::Abbreviate),
+        ("charged-carbon", "[CH2-]C", RenderMode::Skeletal),
+        ("wildcard", "*", RenderMode::Skeletal),
         (
             "complex",
             "CC[C@@H]([C@@H]1[C@H](C[C@@](O1)(CC)[C@H]2CC[C@@]([C@@H](O2)C)(CC)O)C)C(=O)[C@@H](C)[C@H]([C@H](C)CCC3=C(C=C(C(=C3C(=O)O)O)C)Br)O",
