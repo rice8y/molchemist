@@ -96,6 +96,28 @@ fn dumps_extended_sdf_bond_semantics_without_collapsing_to_single() {
 }
 
 #[test]
+fn dumps_stereochemistry_without_folding_or_dropping_semantics() {
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/stereochemistry.sdf");
+    let output = molchemist()
+        .args(["dump", fixture.to_str().unwrap(), "--mode", "skeletal"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stereochemistry dump failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("_molchemist-crossed-double("));
+    assert!(stdout.contains("cram-filled-left("));
+    assert!(stdout.contains("fragment(\"H\", name: \"a1\")"));
+    assert!(stdout.contains("Stereo annotations: C CFG=1; OR7 (a0)"));
+}
+
+#[test]
 fn reads_direct_text_with_an_explicit_format() {
     let output = molchemist()
         .args([
@@ -290,7 +312,7 @@ fn generated_standalone_document_compiles_with_typst() {
     let source = temp_path("compile.typ");
     let pdf = source.with_extension("pdf");
     let fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bond-semantics.sdf");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/stereochemistry.sdf");
     let generated = molchemist()
         .args([
             "dump",
@@ -407,6 +429,34 @@ fn local_typst_package_renders_extended_bond_semantics() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixture = root.join("crates/molchemist-cli/tests/fixtures/bond-semantics-fidelity.typ");
     let pdf = temp_path("bond-semantics-fidelity").with_extension("pdf");
+
+    let compiled = Command::new("typst")
+        .current_dir(&root)
+        .args([
+            "compile",
+            fixture.to_str().unwrap(),
+            pdf.to_str().unwrap(),
+            "--root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        compiled.status.success(),
+        "Typst failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(pdf.exists());
+    fs::remove_file(pdf).unwrap();
+}
+
+#[test]
+#[ignore = "requires Typst and the alchemist package"]
+fn local_typst_package_renders_stereochemistry_fidelity_cases() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = root.join("crates/molchemist-cli/tests/fixtures/stereochemistry-fidelity.typ");
+    let pdf = temp_path("stereochemistry-fidelity").with_extension("pdf");
 
     let compiled = Command::new("typst")
         .current_dir(&root)
