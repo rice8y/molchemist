@@ -958,12 +958,14 @@ fn atom_stereo_spec(
     };
 
     let mut neighbors = Vec::with_capacity(4);
-    if hydrogen_count == 1 {
-        // OpenSMILES places a bracket hydrogen first in the local chiral
-        // neighbor order, even though it has no graph node yet.
-        neighbors.push(None);
-    } else if hydrogen_count > 1 {
-        return None;
+    match hydrogen_count {
+        0 => {}
+        1 => {
+            // OpenSMILES places a bracket hydrogen first in the local chiral
+            // neighbor order, even though it has no graph node yet.
+            neighbors.push(None);
+        }
+        _ => return None,
     }
     neighbors.extend(
         neighbor_order
