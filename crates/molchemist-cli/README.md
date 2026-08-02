@@ -14,6 +14,17 @@ cargo install --locked molchemist-cli
 
 No JavaScript runtime or system chemistry library is required.
 
+## Compatibility
+
+| Concern | Requirement or CI coverage |
+| --- | --- |
+| Building and installing the CLI | Rust 1.86 or later |
+| CLI platforms | Rust 1.86 tests on Ubuntu, macOS, and Windows |
+| Compiling generated Typst source | Typst 0.14.0, 0.14.1, 0.14.2, 0.15.0, and 0.15.1 |
+| Package/CLI output parity | Byte-for-byte checked on Ubuntu for every listed Typst version |
+
+The CLI itself does not invoke Typst unless you separately compile its generated source. Compatibility with Typst 0.14.0 and 0.14.1 is tested, but upstream recommends 0.14.2 or later because those earlier releases contain a [WebAssembly runtime security issue](https://github.com/typst/typst/releases/tag/v0.14.2).
+
 ## Usage
 
 Dump a Molfile or SDF file to standard output:

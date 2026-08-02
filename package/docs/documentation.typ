@@ -133,6 +133,33 @@ Dot-separated SMILES and disconnected Molfile/SDF graphs keep every component an
 - `Molfile / SDF`: coordinate-bearing structure text. Use it for database exports or drawing-tool output when preserving the supplied layout matters.
 - `SMILES`: compact inline source text. Use it for examples, generated documents, and quick sketches. `molchemist` computes 2D coordinates before rendering.
 
+= Compatibility and Test Coverage
+
+#{
+  set par(justify: false)
+  table(
+    columns: (1.3fr, 0.75fr, 2.35fr),
+    inset: 6pt,
+    align: left,
+    table.header([*Surface*], [*Minimum*], [*Continuously tested*]),
+    [Typst package with `str` or `bytes` input],
+    [`0.14.0`],
+    [`0.14.0`, `0.14.1`, `0.14.2`, `0.15.0`, and `0.15.1`],
+    [Typst `path(...)` input],
+    [`0.15.0`],
+    [`0.15.0` and `0.15.1`],
+    [`molchemist-cli` build],
+    [Rust `1.86`],
+    [Rust `1.86` on Ubuntu, macOS, and Windows],
+  )
+}
+
+For each listed Typst version, CI compiles the rendering fixtures on Ubuntu and checks that package dump output is byte-for-byte identical to CLI output. Rust parser, formatter, CLI, and WASM-host tests additionally run on macOS and Windows. The matrix covers the published package entrypoint and CLI-generated source, not the separate third-party toolchain used to typeset this manual.
+
+#warning-alert[
+  Compatibility with Typst 0.14.0 and 0.14.1 is tested for users who cannot upgrade, but those releases contain an #link("https://github.com/typst/typst/releases/tag/v0.14.2")[upstream WebAssembly runtime security issue]. Prefer Typst 0.14.2 or later for production documents.
+]
+
 = Example Data
 
 The SDF examples in this manual use real PubChem records included in the repository test data.
@@ -1058,15 +1085,15 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
   ]
 ]
 
-#pagebreak(weak: true)
+= Limitations
 
-= Limitations and Roadmap
-
-- Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space.
-- Automatic SDF relayout repairs collapsed, missing-XY, and numerically unstable geometry, but intentionally preserves any otherwise valid source layout even when full-mode labels are crowded.
-- SMILES layout is generated internally and may not match the exact layout from an external chemical drawing program.
-- Extended-chirality layout rotates ligand branches around a stereocenter. A center embedded in a cycle may therefore fall back to a textual chirality annotation when its branches cannot be moved independently without distorting the cycle.
-- Annotation helpers are intentionally minimal. For complex figure composition, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
+- Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space. Prefer abbreviated or skeletal mode, or increase #arg[atom-sep].
+- A valid Molfile/SDF 2D layout is preserved even when its full-mode labels are crowded. Automatic relayout is limited to collapsed or numerically unstable XY coordinates.
+- SMILES and unusable SDF coordinates are laid out with Coordgen. The result is deterministic for a given bundled plugin, but it may differ from an external chemical drawing program.
+- Relayout preserves explicit SDF wedge, parity, and enhanced-stereo metadata. It does not infer stereochemistry solely from 3D coordinates.
+- Extended-chirality layout rotates ligand branches around a stereocenter. Invalid or cyclic topology may therefore fall back to a textual chirality annotation when its branches cannot be moved independently.
+- Annotation helpers cover common callouts and arrows, not automatic collision-free figure composition. For complex layouts, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
+- Rendering CI catches compilation failures and package/CLI source divergence on the listed Typst versions. It is not a pixel-snapshot guarantee, so review fonts and final PDF appearance for publication output.
 
 = License and Dependencies
 
