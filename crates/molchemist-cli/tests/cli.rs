@@ -118,6 +118,50 @@ fn dumps_stereochemistry_without_folding_or_dropping_semantics() {
 }
 
 #[test]
+fn dumps_l_and_d_alanine_with_the_expected_absolute_bond_styles() {
+    let cases = [
+        ("skeletal", "cram-filled-right(", "cram-dashed-right("),
+        ("abbreviate", "cram-filled-right(", "cram-dashed-right("),
+        ("full", "cram-filled-left(", "cram-dashed-left("),
+    ];
+
+    for (mode, l_style, d_style) in cases {
+        let l_alanine = molchemist()
+            .args(["dump", "--smiles", "N[C@@H](C)C(=O)O", "--mode", mode])
+            .output()
+            .unwrap();
+        let d_alanine = molchemist()
+            .args(["dump", "--smiles", "N[C@H](C)C(=O)O", "--mode", mode])
+            .output()
+            .unwrap();
+        assert!(l_alanine.status.success(), "L-alanine failed in {mode}");
+        assert!(d_alanine.status.success(), "D-alanine failed in {mode}");
+
+        let l_source = String::from_utf8(l_alanine.stdout).unwrap();
+        let d_source = String::from_utf8(d_alanine.stdout).unwrap();
+        assert!(l_source.contains(l_style), "L-alanine {mode}: {l_source}");
+        assert!(d_source.contains(d_style), "D-alanine {mode}: {d_source}");
+        assert_ne!(l_source, d_source, "enantiomers collapsed in {mode}");
+    }
+}
+
+#[test]
+fn implicit_and_explicit_hydrogen_alanine_dump_the_same_center_orientation() {
+    let sources = ["N[C@@H](C)C(=O)O", "N[C@@]([H])(C)C(=O)O"].map(|smiles| {
+        let output = molchemist()
+            .args(["dump", "--smiles", smiles, "--mode", "skeletal"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{smiles}");
+        String::from_utf8(output.stdout).unwrap()
+    });
+
+    assert!(sources
+        .iter()
+        .all(|source| source.contains("cram-filled-right(")));
+}
+
+#[test]
 fn relayouts_sdf_records_with_collapsed_coordinates() {
     let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/layout-robustness.sdf");

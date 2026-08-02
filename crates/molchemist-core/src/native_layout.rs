@@ -161,6 +161,35 @@ mod tests {
     }
 
     #[test]
+    fn alanine_enantiomers_produce_expected_absolute_bond_styles() {
+        let l_alanine = smiles_to_commands("N[C@@H](C)C(=O)O", RenderMode::Skeletal).unwrap();
+        let d_alanine = smiles_to_commands("N[C@H](C)C(=O)O", RenderMode::Skeletal).unwrap();
+        let mut l_stereo = Vec::new();
+        let mut d_stereo = Vec::new();
+        stereo_bonds(&l_alanine, &mut l_stereo);
+        stereo_bonds(&d_alanine, &mut d_stereo);
+
+        assert_eq!(l_stereo, vec!["cram-filled-right"]);
+        assert_eq!(d_stereo, vec!["cram-dashed-right"]);
+    }
+
+    #[test]
+    fn implicit_and_explicit_hydrogen_alanine_keep_the_same_absolute_configuration() {
+        let implicit = smiles_to_commands("N[C@@H](C)C(=O)O", RenderMode::Skeletal).unwrap();
+        let explicit = smiles_to_commands("N[C@@]([H])(C)C(=O)O", RenderMode::Skeletal).unwrap();
+        let mut implicit_stereo = Vec::new();
+        let mut explicit_stereo = Vec::new();
+        stereo_bonds(&implicit, &mut implicit_stereo);
+        stereo_bonds(&explicit, &mut explicit_stereo);
+
+        assert_eq!(implicit_stereo.first(), explicit_stereo.first());
+        assert_eq!(
+            implicit_stereo.first().map(String::as_str),
+            Some("cram-filled-right")
+        );
+    }
+
+    #[test]
     fn full_mode_keeps_the_expanded_stereochemical_hydrogen_visible() {
         let commands = smiles_to_commands("[C@H](F)(Cl)Br", RenderMode::Full).unwrap();
         let mut stereo = Vec::new();
