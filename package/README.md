@@ -214,11 +214,7 @@ For SMILES input, the default `render-smiles(...)` mode expands implicit hydroge
 
 For Molfile/SDF input, up/down single bonds remain wedge/dash bonds. Undefined double-bond geometry (V2000 stereo code 3 or V3000 double-bond `CFG=2`) is rendered as a crossed double bond. Atom `CFG` parity and V3000 enhanced stereo groups (`STEABS`, `STEREL`, and `STERAC`) are retained as stereo annotations below the structure, and those annotations are also preserved in dump/CLI source.
 
-Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are accepted as well; because the current `alchemist`-based renderer does not have native glyphs for those geometries, they are preserved as stereo annotations below the rendered structure instead of wedge/dash depictions.
-
-## Feature Plan
-
-- **Native depiction for extended chirality:** Extended OpenSMILES chirality classes such as allene (`@AL`), square-planar (`@SP`), trigonal-bipyramidal (`@TB`), and octahedral (`@OH`) are currently preserved as textual stereo annotations. A future version may render these classes natively once the expected 2D depiction conventions and the required `alchemist` primitives are clarified.
+Extended OpenSMILES chirality classes are depicted natively when their topology permits an unambiguous 2D projection. Allene (`@AL`) configurations use complementary terminal wedge/dash bonds; square-planar (`@SP`) configurations use the specified U, 4, or Z ligand path; and trigonal-bipyramidal (`@TB`) and octahedral (`@OH`) configurations combine the specified ligand winding with solid/hashed viewing-axis bonds. If an invalid or cyclic topology prevents the ligand branches from being placed independently, the original chirality tag is retained as a stereo annotation rather than silently discarded.
 
 ## API Reference
 
