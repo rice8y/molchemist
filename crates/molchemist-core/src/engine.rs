@@ -266,6 +266,28 @@ pub fn sdf_record_to_ast(
     commands_to_cbor(&commands)
 }
 
+pub fn sdf_record_to_layout_input(sdf_data: &[u8], record: usize) -> Result<Vec<u8>, String> {
+    let sdf = std::str::from_utf8(sdf_data).map_err(|error| error.to_string())?;
+    let (mol, _) = parse_sdf_record(sdf, record)?;
+    if sdf_requires_layout(&mol) {
+        Ok(encode_layout_input(&sdf_layout_graph(&mol)))
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+pub fn sdf_record_to_ast_with_coords(
+    sdf_data: &[u8],
+    coords_data: &[u8],
+    options: &[u8],
+    record: usize,
+) -> Result<Vec<u8>, String> {
+    let sdf = std::str::from_utf8(sdf_data).map_err(|error| error.to_string())?;
+    let commands =
+        sdf_record_to_commands_with_coords(sdf, coords_data, mode_from_options(options), record)?;
+    commands_to_cbor(&commands)
+}
+
 pub fn sdf_to_commands(sdf: &str, mode: RenderMode) -> Result<Vec<Command>, String> {
     sdf_record_to_commands(sdf, mode, 1)
 }
@@ -275,13 +297,35 @@ pub fn sdf_record_to_commands(
     mode: RenderMode,
     record: usize,
 ) -> Result<Vec<Command>, String> {
+    let (mol, record_sdf) = parse_sdf_record(sdf, record)?;
+    let stereo_map = extract_sdf_stereo(&mol, record_sdf);
+    let render_mol = render_mol_from_sdf(&mol, record_sdf);
+    Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
+}
+
+pub fn sdf_record_to_commands_with_coords(
+    sdf: &str,
+    coords_data: &[u8],
+    mode: RenderMode,
+    record: usize,
+) -> Result<Vec<Command>, String> {
+    let (mol, record_sdf) = parse_sdf_record(sdf, record)?;
+    let coords = decode_coords(coords_data, mol.atoms.len(), mol.bonds.len())?;
+    let stereo_map = extract_sdf_stereo(&mol, record_sdf);
+    let mut render_mol = render_mol_from_sdf(&mol, record_sdf);
+    for (atom, &(x, y)) in render_mol.atoms.iter_mut().zip(&coords.coords) {
+        atom.x = f64::from(x);
+        atom.y = f64::from(y);
+    }
+    Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
+}
+
+fn parse_sdf_record(sdf: &str, record: usize) -> Result<(sdfrust::Molecule, &str), String> {
     let record_sdf = select_sdf_record(sdf, record)?;
     let mol = parse_sdf_auto_string(record_sdf)
         .map_err(|error| format!("could not parse SDF record {record}: {error}"))?;
     validate_sdf_molecule(&mol, record)?;
-    let stereo_map = extract_sdf_stereo(&mol, record_sdf);
-    let render_mol = render_mol_from_sdf(&mol, record_sdf);
-    Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
+    Ok((mol, record_sdf))
 }
 
 fn select_sdf_record(sdf: &str, record: usize) -> Result<&str, String> {
@@ -361,6 +405,91 @@ fn validate_sdf_molecule(mol: &sdfrust::Molecule, record: usize) -> Result<(), S
     }
 
     Ok(())
+}
+
+fn sdf_requires_layout(mol: &sdfrust::Molecule) -> bool {
+    if mol.bonds.is_empty() {
+        return false;
+    }
+
+    let coordinate_scale = mol.atoms.iter().fold(1.0f64, |scale, atom| {
+        scale.max(atom.x.abs()).max(atom.y.abs())
+    });
+    let minimum_length = coordinate_scale * f64::EPSILON * 64.0;
+    let mut lengths = Vec::with_capacity(mol.bonds.len());
+
+    for bond in &mol.bonds {
+        let atom1 = &mol.atoms[bond.atom1];
+        let atom2 = &mol.atoms[bond.atom2];
+        let length = (atom2.x - atom1.x).hypot(atom2.y - atom1.y);
+        if !length.is_finite() || length <= minimum_length {
+            return true;
+        }
+        if bond.order != BondOrder::Hydrogen {
+            lengths.push(length);
+        }
+    }
+
+    if lengths.is_empty() {
+        return false;
+    }
+    let typical_length = median(&mut lengths).unwrap_or(1.0);
+    lengths
+        .iter()
+        .any(|length| *length < typical_length * 0.05 || *length > typical_length * 20.0)
+}
+
+fn sdf_layout_graph(mol: &sdfrust::Molecule) -> SmilesGraph {
+    let atoms = mol
+        .atoms
+        .iter()
+        .map(|atom| {
+            let atomic_number = atom
+                .element
+                .parse::<AtomSymbol>()
+                .map(|element| element.atomic_number())
+                .ok()
+                .filter(|&number| number > 0)
+                .unwrap_or(6);
+            SmilesAtom {
+                element: atom.element.clone(),
+                atomic_number,
+                hydrogens: 0,
+                charge: atom.formal_charge,
+                isotope: None,
+                atom_map: None,
+                stereo: None,
+                extended_stereo: None,
+                stereo_annotation: None,
+            }
+        })
+        .collect::<Vec<_>>();
+    let bonds = mol
+        .bonds
+        .iter()
+        .map(|bond| SmilesBond {
+            atom1: bond.atom1,
+            atom2: bond.atom2,
+            kind: match bond.order {
+                BondOrder::Double | BondOrder::DoubleOrAromatic => SmilesBondKind::Double,
+                BondOrder::Triple => SmilesBondKind::Triple,
+                BondOrder::Aromatic => SmilesBondKind::Aromatic,
+                _ => SmilesBondKind::Single,
+            },
+        })
+        .collect::<Vec<_>>();
+    let mut neighbor_order = vec![Vec::new(); atoms.len()];
+    for bond in &bonds {
+        neighbor_order[bond.atom1].push(bond.atom2);
+        neighbor_order[bond.atom2].push(bond.atom1);
+    }
+
+    SmilesGraph {
+        atoms,
+        bonds,
+        neighbor_order,
+        double_bond_stereo: Vec::new(),
+    }
 }
 
 pub fn smiles_to_layout_input(smiles_data: &[u8]) -> Result<Vec<u8>, String> {
@@ -1437,9 +1566,15 @@ fn decode_coords(
     }
 
     let mut coords = Vec::with_capacity(atom_count);
-    for _ in 0..atom_count {
+    for atom in 0..atom_count {
         let x = read_f32_le(coords_data, &mut offset)?;
         let y = read_f32_le(coords_data, &mut offset)?;
+        if !x.is_finite() || !y.is_finite() {
+            return Err(format!(
+                "Coordinate payload atom {} has non-finite coordinates",
+                atom + 1
+            ));
+        }
         coords.push((x, y));
     }
 
@@ -1826,9 +1961,8 @@ fn ast_from_render_mol(
     stereo_map: &HashMap<(usize, usize), (u8, bool)>,
 ) -> Vec<Command> {
     let mut adj: Vec<Vec<(usize, BondKind, usize)>> = vec![Vec::new(); mol.atoms.len()];
-    let mut total_len = 0.0;
-    let mut bond_count = 0usize;
-    let mut fallback_total_len = 0.0;
+    let mut primary_lengths = Vec::new();
+    let mut fallback_lengths = Vec::new();
 
     for (i, bond) in mol.bonds.iter().enumerate() {
         adj[bond.atom1].push((bond.atom2, bond.kind, i));
@@ -1838,22 +1972,18 @@ fn ast_from_render_mol(
         let v = &mol.atoms[bond.atom2];
         let dx = u.x - v.x;
         let dy = u.y - v.y;
-        let length = (dx * dx + dy * dy).sqrt();
-        fallback_total_len += length;
-        if bond.kind.contributes_to_average_length() {
-            total_len += length;
-            bond_count += 1;
+        let length = dx.hypot(dy);
+        if length.is_finite() && length > f64::EPSILON {
+            fallback_lengths.push(length);
+            if bond.kind.contributes_to_average_length() {
+                primary_lengths.push(length);
+            }
         }
     }
 
-    let avg_length = if bond_count > 0 {
-        total_len / bond_count as f64
-    } else if !mol.bonds.is_empty() {
-        fallback_total_len / mol.bonds.len() as f64
-    } else {
-        1.0
-    };
-    let avg_length = if avg_length < 1e-6 { 1.0 } else { avg_length };
+    let avg_length = median(&mut primary_lengths)
+        .or_else(|| median(&mut fallback_lengths))
+        .unwrap_or(1.0);
 
     let mut visited_nodes = vec![false; mol.atoms.len()];
     let mut handled_bonds = vec![false; mol.bonds.len()];
@@ -1901,6 +2031,19 @@ fn ast_from_render_mol(
     }
 
     root_commands
+}
+
+fn median(values: &mut [f64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    let middle = values.len() / 2;
+    if values.len() % 2 == 0 {
+        Some(values[middle - 1] / 2.0 + values[middle] / 2.0)
+    } else {
+        Some(values[middle])
+    }
 }
 
 fn build_labels(
@@ -2252,14 +2395,24 @@ fn average_ring_center(ring: &[usize], mol: &RenderMol) -> (f64, f64) {
 fn calc_angle(u: &RenderAtom, v: &RenderAtom) -> f64 {
     let dx = v.x - u.x;
     let dy = v.y - u.y;
-    dy.atan2(dx).to_degrees()
+    let angle = dy.atan2(dx).to_degrees();
+    if angle.is_finite() {
+        angle
+    } else {
+        0.0
+    }
 }
 
 fn calc_length_scale(u: &RenderAtom, v: &RenderAtom, avg_len: f64) -> f64 {
     let dx = u.x - v.x;
     let dy = u.y - v.y;
-    let len = (dx * dx + dy * dy).sqrt();
-    len / avg_len
+    let len = dx.hypot(dy);
+    let scale = len / avg_len;
+    if scale.is_finite() && scale > f64::EPSILON {
+        scale
+    } else {
+        1.0
+    }
 }
 
 fn bond_func_name(
@@ -2649,6 +2802,36 @@ mod tests {
         )
     }
 
+    fn degenerate_v2000(second_z: f64, stereo: u8) -> String {
+        format!(
+            concat!(
+                "degenerate layout\n",
+                "  molchemist\n",
+                "\n",
+                "  2  1  0  0  0  0  0  0  0  0999 V2000\n",
+                "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+                "    0.0000    0.0000{second_z:>10.4} N   0  0  0  0  0  0  0  0  0  0  0  0\n",
+                "  1  2  1{stereo:>3}  0  0  0\n",
+                "M  END\n",
+            ),
+            second_z = second_z,
+            stereo = stereo,
+        )
+    }
+
+    const UNEVEN_V2000: &str = concat!(
+        "uneven layout\n",
+        "  molchemist\n",
+        "\n",
+        "  3  2  0  0  0  0  0  0  0  0999 V2000\n",
+        "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "    1.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "  101.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "  1  2  1  0  0  0  0\n",
+        "  2  3  1  0  0  0  0\n",
+        "M  END\n",
+    );
+
     fn v3000_bond(order: u8, atom1: usize, atom2: usize) -> String {
         format!(
             concat!(
@@ -2839,7 +3022,7 @@ mod tests {
             "M  V30 BEGIN ATOM\n",
             "M  V30 1 C 0.0000 0.0000 0.0000 0\n",
             "M  V30 2 N 1.5000 0.0000 0.0000 0\n",
-            "M  V30 3 O 4.5000 0.0000 0.0000 0\n",
+            "M  V30 3 O 46.5000 0.0000 0.0000 0\n",
             "M  V30 END ATOM\n",
             "M  V30 BEGIN BOND\n",
             "M  V30 1 1 1 2\n",
@@ -2855,7 +3038,10 @@ mod tests {
         assert_eq!(bonds[0].0, "single");
         assert!((bonds[0].1 - 1.0).abs() < 1e-9);
         assert_eq!(bonds[1].0, "hydrogen");
-        assert!((bonds[1].1 - 2.0).abs() < 1e-9);
+        assert!((bonds[1].1 - 30.0).abs() < 1e-9);
+        assert!(sdf_record_to_layout_input(sdf.as_bytes(), 1)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -2970,6 +3156,53 @@ mod tests {
         assert_eq!(
             sdf_to_commands(&non_finite, RenderMode::Full).unwrap_err(),
             "SDF record 1 atom 1 has non-finite coordinates"
+        );
+    }
+
+    #[test]
+    fn sdf_requests_layout_only_for_unusable_source_coordinates() {
+        let valid = v2000_bond(1, 0);
+        let collapsed = degenerate_v2000(0.0, 0);
+        let z_only = degenerate_v2000(1.5, 0);
+
+        assert!(sdf_record_to_layout_input(valid.as_bytes(), 1)
+            .unwrap()
+            .is_empty());
+        assert!(!sdf_record_to_layout_input(UNEVEN_V2000.as_bytes(), 1)
+            .unwrap()
+            .is_empty());
+        for sdf in [&collapsed, &z_only] {
+            let payload = sdf_record_to_layout_input(sdf.as_bytes(), 1).unwrap();
+            let (atoms, bonds, atom_stereo, double_bond_stereo) = decode_layout_input(&payload);
+
+            assert_eq!(atoms, vec![6, 7]);
+            assert_eq!(bonds, vec![(0, 1, 1)]);
+            assert!(atom_stereo.is_empty());
+            assert!(double_bond_stereo.is_empty());
+        }
+    }
+
+    #[test]
+    fn sdf_fallback_coordinates_keep_source_stereo_and_nonzero_scale() {
+        let sdf = degenerate_v2000(0.0, 1);
+        let coords = coordinate_payload(&[(0.0, 0.0), (1.5, 0.0)], 1);
+        let commands =
+            sdf_record_to_commands_with_coords(&sdf, &coords, RenderMode::Full, 1).unwrap();
+        let bonds = bond_data(&commands);
+
+        assert_eq!(bonds.len(), 1);
+        assert_eq!(bonds[0].0, "cram-filled-left");
+        assert!((bonds[0].1 - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coordinate_payload_rejects_non_finite_layout_results() {
+        let sdf = degenerate_v2000(0.0, 0);
+        let coords = coordinate_payload(&[(f32::NAN, 0.0), (1.5, 0.0)], 1);
+
+        assert_eq!(
+            sdf_record_to_commands_with_coords(&sdf, &coords, RenderMode::Full, 1).unwrap_err(),
+            "Coordinate payload atom 1 has non-finite coordinates"
         );
     }
 

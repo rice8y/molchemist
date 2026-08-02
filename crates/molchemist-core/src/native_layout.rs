@@ -88,7 +88,22 @@ fn payload_counts(input: &[u8]) -> Result<(usize, usize), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::smiles_to_layout_input;
+    use crate::{
+        sdf_record_to_commands_with_coords, sdf_record_to_layout_input, smiles_to_layout_input,
+    };
+
+    const COLLAPSED_SDF: &str = concat!(
+        "collapsed\n",
+        "  molchemist\n",
+        "\n",
+        "  3  2  0  0  0  0  0  0  0  0999 V2000\n",
+        "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "    0.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "    0.0000    0.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0\n",
+        "  1  2  1  1  0  0  0\n",
+        "  1  3  1  0  0  0  0\n",
+        "M  END\n",
+    );
 
     fn stereo_bonds(commands: &[Command], output: &mut Vec<String>) {
         for command in commands {
@@ -177,5 +192,26 @@ mod tests {
             assert_eq!(stereo.len(), expected_stereo_bonds, "{smiles}");
             assert!(fallback_annotations.is_empty(), "{smiles}");
         }
+    }
+
+    #[test]
+    fn native_coordgen_recovers_a_collapsed_sdf_layout() {
+        let layout_input = sdf_record_to_layout_input(COLLAPSED_SDF.as_bytes(), 1).unwrap();
+        let coordinates = layout_payload(&layout_input).unwrap();
+        let commands = sdf_record_to_commands_with_coords(
+            COLLAPSED_SDF,
+            &coordinates,
+            RenderMode::Skeletal,
+            1,
+        )
+        .unwrap();
+        let mut stereo = Vec::new();
+        stereo_bonds(&commands, &mut stereo);
+
+        assert_eq!(stereo.len(), 1);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Bond { length_scale, .. } if *length_scale > 0.5
+        )));
     }
 }
