@@ -90,6 +90,24 @@ mod tests {
     use super::*;
     use crate::smiles_to_layout_input;
 
+    fn stereo_bonds(commands: &[Command], output: &mut Vec<String>) {
+        for command in commands {
+            match command {
+                Command::Fragment { links, .. } => output.extend(
+                    links
+                        .iter()
+                        .filter(|link| link.bond_type.starts_with("cram-"))
+                        .map(|link| link.bond_type.clone()),
+                ),
+                Command::Bond { bond_type, .. } if bond_type.starts_with("cram-") => {
+                    output.push(bond_type.clone());
+                }
+                Command::Branch { body } => stereo_bonds(body, output),
+                _ => {}
+            }
+        }
+    }
+
     #[test]
     fn native_coordgen_returns_expected_payload_shape() {
         let input = smiles_to_layout_input(b"N[C@@H](C)C(=O)O").unwrap();
@@ -99,5 +117,31 @@ mod tests {
         assert_eq!(u32::from_le_bytes(output[4..8].try_into().unwrap()), 6);
         assert_eq!(u32::from_le_bytes(output[8..12].try_into().unwrap()), 5);
         assert_eq!(output.len(), 12 + 6 * 8 + 5);
+    }
+
+    #[test]
+    fn leading_tetrahedral_enantiomers_produce_opposite_bond_styles() {
+        let clockwise = smiles_to_commands("[C@H](F)(Cl)Br", RenderMode::Skeletal).unwrap();
+        let counterclockwise = smiles_to_commands("[C@@H](F)(Cl)Br", RenderMode::Skeletal).unwrap();
+        let mut clockwise_stereo = Vec::new();
+        let mut counterclockwise_stereo = Vec::new();
+        stereo_bonds(&clockwise, &mut clockwise_stereo);
+        stereo_bonds(&counterclockwise, &mut counterclockwise_stereo);
+
+        assert_eq!(clockwise_stereo, vec!["cram-dashed-left"]);
+        assert_eq!(counterclockwise_stereo, vec!["cram-filled-left"]);
+    }
+
+    #[test]
+    fn full_mode_keeps_the_expanded_stereochemical_hydrogen_visible() {
+        let commands = smiles_to_commands("[C@H](F)(Cl)Br", RenderMode::Full).unwrap();
+        let mut stereo = Vec::new();
+        stereo_bonds(&commands, &mut stereo);
+
+        assert!(stereo.len() >= 1);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Fragment { element, name, .. } if element == "H" && name == "a4"
+        )));
     }
 }

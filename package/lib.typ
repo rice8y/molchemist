@@ -57,6 +57,25 @@
   )
 })
 
+#let _molchemist-crossed-double = build-link((length, ctx, cetz-ctx, args) => {
+  import cetz.draw: *
+  let gap = utils.convert-length(
+    cetz-ctx,
+    args.at("gap", default: ctx.config.double.gap),
+  ) / 2
+  let stroke = args.at("stroke", default: ctx.config.double.stroke)
+  line(
+    (0, -gap),
+    (length, gap),
+    stroke: args.at("stroke-right", default: stroke),
+  )
+  line(
+    (0, gap),
+    (length, -gap),
+    stroke: args.at("stroke-left", default: stroke),
+  )
+})
+
 #let _molchemist-coordination-right = build-link((length, ctx, _, args) => {
   import cetz.draw: *
   line(
@@ -91,6 +110,7 @@
   else if b-type == "single-or-aromatic" { _molchemist-single-or-aromatic }
   else if b-type == "double-or-aromatic" { _molchemist-double-or-aromatic }
   else if b-type == "any" or b-type == "either" { _molchemist-wavy }
+  else if b-type == "crossed-double" { _molchemist-crossed-double }
   else if b-type == "coordination-right" { _molchemist-coordination-right }
   else if b-type == "coordination-left" { _molchemist-coordination-left }
   else if b-type == "hydrogen" { _molchemist-hydrogen }
@@ -221,6 +241,22 @@
     }
   }
   notes
+}
+
+#let _render-with-stereo-annotations(ast, rendered) = {
+  let annotations = _collect-annotations(ast)
+  if annotations.len() == 0 {
+    rendered
+  } else {
+    stack(
+      dir: ttb,
+      spacing: 0.45em,
+      rendered,
+      text(size: 0.8em, fill: luma(80%))[
+        Stereo annotations: #annotations.join(", ")
+      ],
+    )
+  }
 }
 
 /// Create a free arrow overlay drawn after the molecule.
@@ -899,7 +935,8 @@
     return raw(code, block: true, lang: "typst")
   } else {
     let ast = cbor(mol-plugin.sdf_record_to_ast(mol-data, bytes(mode), record-data))
-    _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
+    let rendered = _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
+    _render-with-stereo-annotations(ast, rendered)
   }
 }
 
@@ -938,18 +975,6 @@
   } else {
     let ast = cbor(mol-plugin.smiles_to_ast(bytes(smiles), coords, bytes(mode)))
     let rendered = _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
-    let annotations = _collect-annotations(ast)
-    if annotations.len() == 0 {
-      rendered
-    } else {
-      stack(
-        dir: ttb,
-        spacing: 0.45em,
-        rendered,
-        text(size: 0.8em, fill: luma(80%))[
-          Stereo annotations: #annotations.join(", ")
-        ],
-      )
-    }
+    _render-with-stereo-annotations(ast, rendered)
   }
 }

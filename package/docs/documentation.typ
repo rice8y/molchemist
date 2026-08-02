@@ -113,7 +113,7 @@ On Typst 0.15.0 and later, @cmd:render-mol[-] can also receive `path("molecule.s
 
 Molfile/SDF records are detected as V2000 or V3000 automatically. When one SDF contains multiple structures, pass the one-based #arg[record] option, for example `render-mol(sdf-data, record: 2)`. Missing records, empty structures, and malformed coordinate data report an error instead of producing an empty drawing.
 
-SDF bond semantics are retained beyond the usual single, double, and triple orders. Aromatic and query bonds use dashed/dotted variants, any and `either` bonds use a wavy line, coordination bonds retain their donor-to-acceptor arrow direction, and hydrogen bonds use a dotted line. Long hydrogen bonds do not affect the covalent bond-length normalization used by the renderer.
+SDF bond semantics are retained beyond the usual single, double, and triple orders. Aromatic and query bonds use dashed/dotted variants, any and `either` single bonds use a wavy line, undefined double-bond geometry uses a crossed double bond, coordination bonds retain their donor-to-acceptor arrow direction, and hydrogen bonds use a dotted line. Long hydrogen bonds do not affect the covalent bond-length normalization used by the renderer. A wedge/dash bond to explicit hydrogen remains visible in abbreviated and skeletal modes. Atom `CFG` parity and V3000 enhanced stereo groups are retained as annotations below the structure and in dumped source.
 
 SMILES is useful for compact inline examples or generated documents. Because SMILES stores connectivity rather than drawing coordinates, `molchemist` first computes a 2D layout and then renders the structure.
 
@@ -834,7 +834,7 @@ Keep annotations sparse. In most cases, a thin unboxed @cmd:callout-annotation[-
 
 = SMILES Notes
 
-SMILES support is a parse-and-layout pipeline. The parser accepts common SMILES notation, aromatic rings, charges, tetrahedral `@` / `@@` centers, and `/` / `\` double-bond geometry.
+SMILES support is a parse-and-layout pipeline. The parser accepts common SMILES notation, aromatic rings, charges, tetrahedral `@` / `@@` centers, and `/` / `\` double-bond geometry. Tetrahedral centers retain OpenSMILES local neighbor order, including bracket hydrogens and ring-closure token positions.
 
 #example(```typ
 #grid(
@@ -1058,7 +1058,7 @@ Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are
 
 - Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space.
 - SMILES layout is generated internally and may not match the exact layout from an external chemical drawing program.
-- Extended OpenSMILES chirality classes are currently preserved as textual stereo annotations rather than native geometric depictions.
+- Extended OpenSMILES chirality classes are preserved as textual stereo annotations rather than native geometric depictions because Alchemist does not currently provide geometry-specific primitives for those classes.
 - Annotation helpers are intentionally minimal. For complex figure composition, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
 
 = License and Dependencies

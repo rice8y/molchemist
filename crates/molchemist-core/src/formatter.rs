@@ -54,6 +54,25 @@ const EXTENDED_BOND_DEFINITIONS: &str = r#"#import "@preview/cetz:0.5.2"
   )
 })
 
+#let _molchemist-crossed-double = build-link((length, ctx, cetz-ctx, args) => {
+  import cetz.draw: *
+  let gap = utils.convert-length(
+    cetz-ctx,
+    args.at("gap", default: ctx.config.double.gap),
+  ) / 2
+  let stroke = args.at("stroke", default: ctx.config.double.stroke)
+  line(
+    (0, -gap),
+    (length, gap),
+    stroke: args.at("stroke-right", default: stroke),
+  )
+  line(
+    (0, gap),
+    (length, -gap),
+    stroke: args.at("stroke-left", default: stroke),
+  )
+})
+
 #let _molchemist-coordination-right = build-link((length, ctx, _, args) => {
   import cetz.draw: *
   line(
@@ -102,10 +121,48 @@ pub fn format_alchemist(commands: &[Command], base_sep: &str, indent_width: usiz
     if has_extended_bonds(commands) {
         output.push_str(EXTENDED_BOND_DEFINITIONS);
     }
-    output.push_str("#skeletize({\n");
+    let annotations = collect_stereo_annotations(commands);
+    if annotations.is_empty() {
+        output.push_str("#skeletize({\n");
+    } else {
+        output.push_str("#let _molchemist-structure = skeletize({\n");
+    }
     format_commands(&mut output, commands, 1, indent_width);
     output.push_str("})");
+    if !annotations.is_empty() {
+        output.push_str("\n#stack(\n");
+        output.push_str("  dir: ttb,\n");
+        output.push_str("  spacing: 0.45em,\n");
+        output.push_str("  _molchemist-structure,\n");
+        writeln!(
+            output,
+            "  text(size: 0.8em, fill: luma(80%))[Stereo annotations: {}],",
+            escape_content(&annotations.join(", ")),
+        )
+        .unwrap();
+        output.push(')');
+    }
     output
+}
+
+fn collect_stereo_annotations(commands: &[Command]) -> Vec<String> {
+    let mut annotations = Vec::new();
+    for command in commands {
+        match command {
+            Command::Fragment {
+                element,
+                name,
+                annotation: Some(annotation),
+                ..
+            } => {
+                let label = if element.is_empty() { name } else { element };
+                annotations.push(format!("{label} {annotation} ({name})"));
+            }
+            Command::Branch { body } => annotations.extend(collect_stereo_annotations(body)),
+            _ => {}
+        }
+    }
+    annotations
 }
 
 pub fn format_standalone(
@@ -320,6 +377,7 @@ fn is_extended_bond(bond_type: &str) -> bool {
             | "double-or-aromatic"
             | "any"
             | "either"
+            | "crossed-double"
             | "coordination-right"
             | "coordination-left"
             | "hydrogen"
@@ -333,6 +391,7 @@ fn bond_function_name(bond_type: &str) -> &str {
         "single-or-aromatic" => "_molchemist-single-or-aromatic",
         "double-or-aromatic" => "_molchemist-double-or-aromatic",
         "any" | "either" => "_molchemist-wavy",
+        "crossed-double" => "_molchemist-crossed-double",
         "coordination-right" => "_molchemist-coordination-right",
         "coordination-left" => "_molchemist-coordination-left",
         "hydrogen" => "_molchemist-hydrogen",
@@ -533,6 +592,39 @@ mod tests {
         assert!(output.contains("\"a2\": _molchemist-wavy("));
         assert!(output.contains("_molchemist-aromatic(absolute: 0deg"));
         assert!(output.contains("_molchemist-coordination-left(absolute: 90deg"));
+    }
+
+    #[test]
+    fn crossed_double_emits_its_self_contained_typst_helper() {
+        let commands = vec![Command::Bond {
+            name: "b0".to_string(),
+            bond_type: "crossed-double".to_string(),
+            angle: 0.0,
+            offset: None,
+            length_scale: 1.0,
+        }];
+
+        let output = format_alchemist(&commands, "3em", 2);
+
+        assert!(output.contains("#let _molchemist-crossed-double = build-link"));
+        assert!(output.contains("_molchemist-crossed-double(absolute: 0deg"));
+    }
+
+    #[test]
+    fn stereo_annotations_survive_formatted_output() {
+        let commands = vec![Command::Fragment {
+            element: "Pt".to_string(),
+            name: "a0".to_string(),
+            links: Vec::new(),
+            atom: None,
+            annotation: Some("@SP1".to_string()),
+        }];
+
+        let output = format_alchemist(&commands, "3em", 2);
+
+        assert!(output.contains("#let _molchemist-structure = skeletize({"));
+        assert!(output.contains("Stereo annotations: Pt @SP1 (a0)"));
+        assert!(output.ends_with(')'));
     }
 
     #[test]

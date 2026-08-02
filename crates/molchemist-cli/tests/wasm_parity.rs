@@ -68,6 +68,16 @@ fn typst_and_cli_outputs_match_exactly() {
         "extended SDF bond parity failed"
     );
 
+    let stereochemistry = include_str!("fixtures/stereochemistry.sdf");
+    let cli = generator
+        .sdf_to_code(stereochemistry, RenderMode::Skeletal, "3em", 2)
+        .unwrap();
+    assert_eq!(
+        wasm.get("stereochemistry").unwrap(),
+        &cli,
+        "stereochemistry SDF parity failed"
+    );
+
     for (name, smiles, mode) in cases {
         let cli = generator.smiles_to_code(smiles, mode, "3em", 2).unwrap();
         assert_eq!(wasm.get(name).unwrap(), &cli, "parity failed for {name}");

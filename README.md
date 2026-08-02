@@ -210,7 +210,11 @@ When rendering highly complex or dense molecules (e.g., polycyclic compounds, de
     #render-mol(mol-data, config: (atom-sep: 4.5em))
     ```
 
-For SMILES input, the default `render-smiles(...)` mode expands implicit hydrogens into explicit `H` atoms so that `full` mode stays closer to the behavior of `render-mol(...)`. Highly complex or dense molecules can still become visually busy in `full` mode, so `abbreviate: true` or `skeletal: true` will often produce a clearer result. The current implementation also supports tetrahedral `@` / `@@` centers and `/` / `\` double-bond geometry as stereochemical depictions. Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are accepted as well; because the current `alchemist`-based renderer does not have native glyphs for those geometries, they are preserved as stereo annotations below the rendered structure instead of wedge/dash depictions.
+For SMILES input, the default `render-smiles(...)` mode expands implicit hydrogens into explicit `H` atoms so that `full` mode stays closer to the behavior of `render-mol(...)`. Highly complex or dense molecules can still become visually busy in `full` mode, so `abbreviate: true` or `skeletal: true` will often produce a clearer result. Tetrahedral `@` / `@@` centers honor OpenSMILES local neighbor order, including bracket hydrogens and the lexical position of ring-closure bonds, while `/` / `\` retains double-bond geometry. A stereochemical explicit hydrogen is never folded away in abbreviated or skeletal output.
+
+For Molfile/SDF input, up/down single bonds remain wedge/dash bonds. Undefined double-bond geometry (V2000 stereo code 3 or V3000 double-bond `CFG=2`) is rendered as a crossed double bond. Atom `CFG` parity and V3000 enhanced stereo groups (`STEABS`, `STEREL`, and `STERAC`) are retained as stereo annotations below the structure, and those annotations are also preserved in dump/CLI source.
+
+Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are accepted as well; because the current `alchemist`-based renderer does not have native glyphs for those geometries, they are preserved as stereo annotations below the rendered structure instead of wedge/dash depictions.
 
 ## Feature Plan
 
