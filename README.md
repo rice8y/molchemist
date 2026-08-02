@@ -150,6 +150,12 @@ SDF bond orders are retained through the complete parser, AST, package, and CLI 
 
 Extended bonds use conventional visual cues: partial dashed or dotted parallel lines for aromatic and query bonds, a wavy line for any/either bonds, a direction-preserving open arrow for coordination bonds, and a dotted line for hydrogen bonds. These helpers inherit the configured `single` or `double` stroke where applicable. Long hydrogen bonds are excluded from bond-length normalization when covalent bonds are available, so they do not shrink the rest of the structure.
 
+### Stereochemistry
+
+For Molfile/SDF input, up/down single bonds remain wedge/dash bonds. Undefined double-bond geometry (V2000 stereo code 3 or V3000 double-bond `CFG=2`) is rendered as a crossed double bond. Atom `CFG` parity and V3000 enhanced stereo groups (`STEABS`, `STEREL`, and `STERAC`) are retained as stereo annotations below the structure and in dump/CLI source.
+
+Extended OpenSMILES chirality classes are depicted natively when their topology permits an unambiguous 2D projection. Allene (`@AL`) configurations use complementary terminal wedge/dash bonds; square-planar (`@SP`) configurations use the specified U, 4, or Z ligand path; and trigonal-bipyramidal (`@TB`) and octahedral (`@OH`) configurations combine the specified ligand winding with solid/hashed viewing-axis bonds.
+
 ### Multi-component Structures
 
 Disconnected Molfile/SDF graphs and dot-separated SMILES are rendered as distinct components in one figure. Components keep their source order and global atom/bond indices, but are separated by whitespace without adding a visible chemical operator.
@@ -213,7 +219,9 @@ The CLI embeds the same WASM conversion modules as this Typst package, so its de
 
 ## Known Limitations
 
-When rendering highly complex or dense molecules (e.g., polycyclic compounds, dense substituents) in the default **Full Mode**, you may encounter overlapping atoms or intersecting bonds. An otherwise valid 2D layout might not allocate enough physical space on the canvas to draw every explicit text label without collisions. Automatic SDF relayout is intentionally limited to collapsed or numerically unusable coordinates; it does not replace a valid source layout solely to optimize label spacing.
+### Dense Full-Mode Labels
+
+Highly complex or dense molecules can contain overlapping atom labels or intersecting bonds in **Full Mode**. Explicit hydrogens and atom text occupy page space that is not represented in the underlying 2D coordinates.
 
 **Recommended Workarounds:**
 
@@ -224,11 +232,17 @@ When rendering highly complex or dense molecules (e.g., polycyclic compounds, de
     #render-mol(mol-data, config: (atom-sep: 4.5em))
     ```
 
-For SMILES input, the default `render-smiles(...)` mode expands implicit hydrogens into explicit `H` atoms so that `full` mode stays closer to the behavior of `render-mol(...)`. Highly complex or dense molecules can still become visually busy in `full` mode, so `abbreviate: true` or `skeletal: true` will often produce a clearer result. Tetrahedral `@` / `@@` centers honor OpenSMILES local neighbor order, including bracket hydrogens and the lexical position of ring-closure bonds, while `/` / `\` retains double-bond geometry. A stereochemical explicit hydrogen is never folded away in abbreviated or skeletal output.
+### Layout Boundaries
 
-For Molfile/SDF input, up/down single bonds remain wedge/dash bonds. Undefined double-bond geometry (V2000 stereo code 3 or V3000 double-bond `CFG=2`) is rendered as a crossed double bond. Atom `CFG` parity and V3000 enhanced stereo groups (`STEABS`, `STEREL`, and `STERAC`) are retained as stereo annotations below the structure, and those annotations are also preserved in dump/CLI source.
+- A valid Molfile/SDF 2D layout is preserved even when its full-mode labels are crowded. Automatic relayout is limited to collapsed or numerically unstable XY coordinates.
+- SMILES and unusable SDF coordinates are laid out with Coordgen. The result is deterministic for a given bundled plugin, but it may differ from an external chemical drawing program.
+- Relayout preserves explicit SDF wedge, parity, and enhanced-stereo metadata. It does not infer stereochemistry solely from 3D coordinates.
 
-Extended OpenSMILES chirality classes are depicted natively when their topology permits an unambiguous 2D projection. Allene (`@AL`) configurations use complementary terminal wedge/dash bonds; square-planar (`@SP`) configurations use the specified U, 4, or Z ligand path; and trigonal-bipyramidal (`@TB`) and octahedral (`@OH`) configurations combine the specified ligand winding with solid/hashed viewing-axis bonds. If an invalid or cyclic topology prevents the ligand branches from being placed independently, the original chirality tag is retained as a stereo annotation rather than silently discarded.
+### Fallbacks and Test Boundaries
+
+- If an invalid or cyclic extended-chirality topology prevents ligand branches from being placed independently, the original chirality tag is retained as a textual stereo annotation.
+- Annotation helpers cover common callouts and arrows, not automatic collision-free figure composition. Use `cetz-annotation(...)` or dumped Alchemist source for complex layouts.
+- Rendering CI catches compilation failures and package/CLI source divergence on the listed Typst versions. It is not a pixel-snapshot guarantee, so fonts and final PDF appearance should still be reviewed for publication output.
 
 ## API Reference
 

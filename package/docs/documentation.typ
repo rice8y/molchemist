@@ -1085,15 +1085,15 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
   ]
 ]
 
-#pagebreak(weak: true)
+= Limitations
 
-= Limitations and Roadmap
-
-- Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space.
-- Automatic SDF relayout repairs collapsed, missing-XY, and numerically unstable geometry, but intentionally preserves any otherwise valid source layout even when full-mode labels are crowded.
-- SMILES layout is generated internally and may not match the exact layout from an external chemical drawing program.
-- Extended-chirality layout rotates ligand branches around a stereocenter. A center embedded in a cycle may therefore fall back to a textual chirality annotation when its branches cannot be moved independently without distorting the cycle.
-- Annotation helpers are intentionally minimal. For complex figure composition, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
+- Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space. Prefer abbreviated or skeletal mode, or increase #arg[atom-sep].
+- A valid Molfile/SDF 2D layout is preserved even when its full-mode labels are crowded. Automatic relayout is limited to collapsed or numerically unstable XY coordinates.
+- SMILES and unusable SDF coordinates are laid out with Coordgen. The result is deterministic for a given bundled plugin, but it may differ from an external chemical drawing program.
+- Relayout preserves explicit SDF wedge, parity, and enhanced-stereo metadata. It does not infer stereochemistry solely from 3D coordinates.
+- Extended-chirality layout rotates ligand branches around a stereocenter. Invalid or cyclic topology may therefore fall back to a textual chirality annotation when its branches cannot be moved independently.
+- Annotation helpers cover common callouts and arrows, not automatic collision-free figure composition. For complex layouts, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
+- Rendering CI catches compilation failures and package/CLI source divergence on the listed Typst versions. It is not a pixel-snapshot guarantee, so review fonts and final PDF appearance for publication output.
 
 = License and Dependencies
 
