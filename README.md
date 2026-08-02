@@ -6,6 +6,18 @@ It uses a Rust/WASM core to parse molecular graphs and generate `alchemist` ASTs
 
 Third-party license notices and bundled example-data provenance are collected in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
+## Compatibility
+
+| Surface | Minimum | Continuously tested |
+| --- | --- | --- |
+| Typst package with `str` or `bytes` input | Typst 0.14.0 | Typst 0.14.0, 0.14.1, 0.14.2, 0.15.0, and 0.15.1 |
+| Typst `path(...)` input | Typst 0.15.0 | Typst 0.15.0 and 0.15.1 |
+| `molchemist-cli` build | Rust 1.86 | Rust 1.86 on Ubuntu, macOS, and Windows |
+
+On every listed Typst version, CI compiles the rendering fixtures and verifies that package dump output is byte-for-byte identical to CLI output. The rendering matrix runs on Ubuntu; Rust parser, formatter, CLI, and WASM-host tests additionally run on macOS and Windows. This matrix covers the published package entrypoint and CLI-generated source, not the separate Mantys-based manual build under `package/docs`.
+
+Compatibility with Typst 0.14.0 and 0.14.1 is tested for users who cannot upgrade, but those releases contain an [upstream WebAssembly runtime security issue](https://github.com/typst/typst/releases/tag/v0.14.2). Prefer Typst 0.14.2 or later for production documents.
+
 ## Usage
 
 Import `render-mol` for Molfile/SDF inputs, or `render-smiles` for SMILES inputs.

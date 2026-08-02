@@ -133,6 +133,33 @@ Dot-separated SMILES and disconnected Molfile/SDF graphs keep every component an
 - `Molfile / SDF`: coordinate-bearing structure text. Use it for database exports or drawing-tool output when preserving the supplied layout matters.
 - `SMILES`: compact inline source text. Use it for examples, generated documents, and quick sketches. `molchemist` computes 2D coordinates before rendering.
 
+= Compatibility and Test Coverage
+
+#{
+  set par(justify: false)
+  table(
+    columns: (1.3fr, 0.75fr, 2.35fr),
+    inset: 6pt,
+    align: left,
+    table.header([*Surface*], [*Minimum*], [*Continuously tested*]),
+    [Typst package with `str` or `bytes` input],
+    [`0.14.0`],
+    [`0.14.0`, `0.14.1`, `0.14.2`, `0.15.0`, and `0.15.1`],
+    [Typst `path(...)` input],
+    [`0.15.0`],
+    [`0.15.0` and `0.15.1`],
+    [`molchemist-cli` build],
+    [Rust `1.86`],
+    [Rust `1.86` on Ubuntu, macOS, and Windows],
+  )
+}
+
+For each listed Typst version, CI compiles the rendering fixtures on Ubuntu and checks that package dump output is byte-for-byte identical to CLI output. Rust parser, formatter, CLI, and WASM-host tests additionally run on macOS and Windows. The matrix covers the published package entrypoint and CLI-generated source, not the separate third-party toolchain used to typeset this manual.
+
+#warning-alert[
+  Compatibility with Typst 0.14.0 and 0.14.1 is tested for users who cannot upgrade, but those releases contain an #link("https://github.com/typst/typst/releases/tag/v0.14.2")[upstream WebAssembly runtime security issue]. Prefer Typst 0.14.2 or later for production documents.
+]
+
 = Example Data
 
 The SDF examples in this manual use real PubChem records included in the repository test data.
