@@ -108,6 +108,19 @@ mod tests {
         }
     }
 
+    fn annotations(commands: &[Command], output: &mut Vec<String>) {
+        for command in commands {
+            match command {
+                Command::Fragment {
+                    annotation: Some(annotation),
+                    ..
+                } => output.push(annotation.clone()),
+                Command::Branch { body } => annotations(body, output),
+                _ => {}
+            }
+        }
+    }
+
     #[test]
     fn native_coordgen_returns_expected_payload_shape() {
         let input = smiles_to_layout_input(b"N[C@@H](C)C(=O)O").unwrap();
@@ -143,5 +156,26 @@ mod tests {
             command,
             Command::Fragment { element, name, .. } if element == "H" && name == "a4"
         )));
+    }
+
+    #[test]
+    fn extended_chirality_uses_native_geometry_when_topology_is_supported() {
+        let cases = [
+            ("[Pt@SP2](F)(Cl)(Br)I", 0),
+            ("[As@TB5](F)(Cl)(Br)(N)S", 2),
+            ("[Co@OH5](F)(Cl)(Br)(I)(N)S", 2),
+            ("NC(Br)=[C@AL1]=C(O)C", 2),
+        ];
+
+        for (smiles, expected_stereo_bonds) in cases {
+            let commands = smiles_to_commands(smiles, RenderMode::Skeletal).unwrap();
+            let mut stereo = Vec::new();
+            let mut fallback_annotations = Vec::new();
+            stereo_bonds(&commands, &mut stereo);
+            annotations(&commands, &mut fallback_annotations);
+
+            assert_eq!(stereo.len(), expected_stereo_bonds, "{smiles}");
+            assert!(fallback_annotations.is_empty(), "{smiles}");
+        }
     }
 }

@@ -29,5 +29,12 @@
     render-smiles("F/C=C/F", skeletal: true),
     render-smiles("F/C=C\\F", skeletal: true),
   ),
-  [Extended], render-smiles("[Pt@SP1](F)(Cl)(Br)I", skeletal: true),
+  [Extended], grid(
+    columns: 2,
+    gutter: 4mm,
+    render-smiles("NC(Br)=[C@AL1]=C(O)C", skeletal: true),
+    render-smiles("[Pt@SP2](F)(Cl)(Br)I", skeletal: true),
+    render-smiles("[As@TB5](F)(Cl)(Br)(N)S", skeletal: true),
+    render-smiles("[Co@OH5](F)(Cl)(Br)(I)(N)S", skeletal: true),
+  ),
 )
