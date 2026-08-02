@@ -299,17 +299,16 @@ fn format_atom_label(atom: &AtomLabel) -> String {
         attachments.push(format!("tr: [{}]", escape_content(&top_right)));
     }
 
-    if let Some(atom_map) = atom.atom_map {
-        attachments.push(format!("br: [:{atom_map}]"));
-    }
-
-    if attachments.is_empty() {
-        format!("math.equation(math.attach({base}))")
+    let chemical_label = if attachments.is_empty() {
+        format!("math.attach({base})")
     } else {
-        format!(
-            "math.equation(math.attach({base}, {}))",
-            attachments.join(", ")
-        )
+        format!("math.attach({base}, {})", attachments.join(", "))
+    };
+
+    if let Some(atom_map) = atom.atom_map {
+        format!("math.equation(math.attach({chemical_label} + [:{atom_map}]))")
+    } else {
+        format!("math.equation({chemical_label})")
     }
 }
 
@@ -528,11 +527,12 @@ mod tests {
         let output = format_alchemist(&commands, "3em", 2);
 
         assert!(output.contains(concat!(
-            "fragment(math.equation(math.attach(",
+            "fragment(math.equation(math.attach(math.attach(",
             "[C#math.attach([H], b: [3])], ",
-            "tl: [13], tr: [+•], br: [:7]",
-            ")), name: \"a0\")",
+            "tl: [13], tr: [+•]",
+            ") + [:7])), name: \"a0\")",
         )));
+        assert!(!output.contains("br: [:7]"));
     }
 
     #[test]

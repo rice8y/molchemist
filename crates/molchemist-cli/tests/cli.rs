@@ -35,6 +35,31 @@ fn dumps_smiles_to_stdout_without_diagnostics() {
 }
 
 #[test]
+fn dumps_atom_classes_as_inline_label_suffixes() {
+    for mode in ["full", "abbreviate", "skeletal"] {
+        let output = molchemist()
+            .args(["dump", "--smiles", "[CH3:1]O", "--mode", mode])
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "atom class failed in {mode}");
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(" + [:1]))"), "atom class missing in {mode}");
+        assert!(
+            !stdout.contains("br: [:1]"),
+            "atom class is subscripted in {mode}"
+        );
+        if mode != "full" {
+            assert!(
+                stdout.contains("math.attach(math.attach([C#math.attach([H], b: [3])]) + [:1])"),
+                "hydrogen count or atom class order changed in {mode}"
+            );
+        }
+    }
+}
+
+#[test]
 fn dumps_smiles_quadruple_bonds_in_every_mode() {
     for mode in ["full", "abbreviate", "skeletal"] {
         let output = molchemist()

@@ -168,12 +168,17 @@
   let isotope = atom.at("isotope", default: none)
   let atom-map = atom.at("atomMap", default: none)
 
-  math.equation(math.attach(
+  let chemical-label = math.attach(
     base,
     tl: if isotope == none { none } else { [#isotope] },
     tr: if top-right == [] { none } else { top-right },
-    br: if atom-map == none { none } else { [:#atom-map] },
-  ))
+  )
+  let label = if atom-map == none {
+    chemical-label
+  } else {
+    math.attach(chemical-label + [:#atom-map])
+  }
+  math.equation(label)
 }
 
 #let _render-ast(cmds, base-sep, config: (:)) = {
