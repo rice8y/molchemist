@@ -113,6 +113,8 @@ On Typst 0.15.0 and later, @cmd:render-mol[-] can also receive `path("molecule.s
 
 Molfile/SDF records are detected as V2000 or V3000 automatically. When one SDF contains multiple structures, pass the one-based #arg[record] option, for example `render-mol(sdf-data, record: 2)`. Missing records, empty structures, and malformed coordinate data report an error instead of producing an empty drawing.
 
+Usable 2D coordinates are preserved exactly. If bonded atoms collapse onto the same XY positions, a 3D record has no usable XY projection, or bond lengths are numerically unstable, `molchemist` generates a fresh 2D layout with Coordgen. Atom metadata, bond semantics, and stereochemical wedges/dashes still come from the selected SDF record.
+
 SDF bond semantics are retained beyond the usual single, double, and triple orders. Aromatic and query bonds use dashed/dotted variants, any and `either` single bonds use a wavy line, undefined double-bond geometry uses a crossed double bond, coordination bonds retain their donor-to-acceptor arrow direction, and hydrogen bonds use a dotted line. Long hydrogen bonds do not affect the covalent bond-length normalization used by the renderer. A wedge/dash bond to explicit hydrogen remains visible in abbreviated and skeletal modes. Atom `CFG` parity and V3000 enhanced stereo groups are retained as annotations below the structure and in dumped source.
 
 SMILES is useful for compact inline examples or generated documents. Because SMILES stores connectivity rather than drawing coordinates, `molchemist` first computes a 2D layout and then renders the structure.
@@ -226,7 +228,7 @@ Pass #arg[config] for visual adjustments that should reach `alchemist`, such as 
 ]
 
 #info-alert[
-  Molfile and SDF input already contains coordinates. Routing-oriented `alchemist` settings do not reshape that graph; prefer `atom-sep`, font, and stroke settings for visual tuning.
+  Molfile and SDF input normally contains usable coordinates; collapsed or numerically unstable coordinates receive an automatic 2D fallback layout. Routing-oriented `alchemist` settings do not reshape either graph; prefer `atom-sep`, font, and stroke settings for visual tuning.
 ]
 
 = Annotations
@@ -868,6 +870,8 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
 )[
   Render a molecule from raw Molfile or SDF text.
 
+  Usable input coordinates are preserved. Collapsed or numerically unstable coordinates receive a generated 2D layout while retaining source metadata and bond stereochemistry.
+
   #argument("data", types: (str, bytes, "path"))[
     Raw `.mol` or `.sdf` data. Typst 0.15.0 and later may pass `path(...)` directly; older versions should pass `read(...)` output.
   ]
@@ -1059,6 +1063,7 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
 = Limitations and Roadmap
 
 - Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space.
+- Automatic SDF relayout repairs collapsed, missing-XY, and numerically unstable geometry, but intentionally preserves any otherwise valid source layout even when full-mode labels are crowded.
 - SMILES layout is generated internally and may not match the exact layout from an external chemical drawing program.
 - Extended-chirality layout rotates ligand branches around a stereocenter. A center embedded in a cycle may therefore fall back to a textual chirality annotation when its branches cannot be moved independently without distorting the cycle.
 - Annotation helpers are intentionally minimal. For complex figure composition, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
