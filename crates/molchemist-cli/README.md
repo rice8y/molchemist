@@ -58,7 +58,7 @@ molchemist dump compounds.sdf --record 3
 
 Each selected Molfile/SDF record is detected as V2000 or V3000. Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers are reported as conversion errors.
 
-Extended SDF bond orders are preserved in generated source: aromatic and query bonds use distinct dashed/dotted forms, any and `either` bonds are wavy, coordination bonds retain their arrow direction, and hydrogen bonds are dotted. The generated helpers are included automatically, including in `--standalone` output.
+Extended SDF bond orders are preserved in generated source: aromatic and query bonds use distinct dashed/dotted forms, any and `either` bonds are wavy, coordination bonds retain their arrow direction, hydrogen bonds are dotted, and undefined double-bond geometry is crossed. Wedge/dash bonds to explicit hydrogen remain visible in abbreviated and skeletal modes. SDF atom parity, enhanced stereo groups, and extended OpenSMILES chirality classes are retained as annotations in generated source. The generated helpers are included automatically, including in `--standalone` output.
 
 Disconnected Molfile/SDF graphs and dot-separated SMILES retain every component. Generated Alchemist source places components side by side with a neutral `operator(none, ...)` boundary:
 
