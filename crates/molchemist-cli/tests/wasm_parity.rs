@@ -11,10 +11,12 @@ fn typst_and_cli_outputs_match_exactly() {
     let output = Command::new("typst")
         .current_dir(&root)
         .args([
-            "eval",
-            "query(<parity>).first().value",
-            "--in",
+            "query",
             "tests/fixtures/typst-parity.typ",
+            "<parity>",
+            "--field",
+            "value",
+            "--one",
             "--root",
             ".",
         ])
@@ -101,10 +103,12 @@ fn first_hundred_pubchem_compounds_match_exactly() {
     let output = Command::new("typst")
         .current_dir(&root)
         .args([
-            "eval",
-            "query(<pubchem-parity>).first().value",
-            "--in",
+            "query",
             "test-results/cli/wasm-parity.typ",
+            "<pubchem-parity>",
+            "--field",
+            "value",
+            "--one",
             "--root",
             ".",
         ])
