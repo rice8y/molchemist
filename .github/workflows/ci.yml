@@ -43,16 +43,20 @@ jobs:
       - run: cargo package -p molchemist-cli --locked
 
   rendering:
-    name: Typst rendering
+    name: Typst rendering (${{ matrix.typst }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        typst: ["0.14.0", "0.14.1", "0.14.2", "0.15.0", "0.15.1"]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.86
       - uses: Swatinem/rust-cache@v2
       - uses: typst-community/setup-typst@v5
         with:
-          typst-version: 0.14.2
+          typst-version: ${{ matrix.typst }}
           cache-dependency-path: package/lib.typ
       - name: Compile rendering fixtures
         run: cargo test --locked -p molchemist-cli --test cli -- --ignored
