@@ -246,7 +246,7 @@ pub fn sdf_record_to_commands(
     let mol = parse_sdf_auto_string(record_sdf)
         .map_err(|error| format!("could not parse SDF record {record}: {error}"))?;
     validate_sdf_molecule(&mol, record)?;
-    let stereo_map = extract_sdf_stereo(&mol);
+    let stereo_map = extract_sdf_stereo(&mol, record_sdf);
     let render_mol = render_mol_from_sdf(&mol, record_sdf);
     Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
 }
@@ -389,11 +389,13 @@ fn commands_to_cbor(commands: &[Command]) -> Result<Vec<u8>, String> {
 
 fn render_mol_from_sdf(mol: &sdfrust::Molecule, sdf: &str) -> RenderMol {
     let metadata = extract_sdf_atom_metadata(sdf, mol);
+    let stereo_annotations = extract_sdf_stereo_annotations(sdf, mol);
     let atoms = mol
         .atoms
         .iter()
         .zip(metadata)
-        .map(|(atom, metadata)| RenderAtom {
+        .zip(stereo_annotations)
+        .map(|((atom, metadata), stereo_annotation)| RenderAtom {
             element: atom.element.clone(),
             x: atom.x,
             y: atom.y,
@@ -402,7 +404,7 @@ fn render_mol_from_sdf(mol: &sdfrust::Molecule, sdf: &str) -> RenderMol {
             isotope: metadata.isotope,
             radical: atom.radical.or(metadata.radical),
             atom_map: atom.atom_atom_mapping.or(metadata.atom_map),
-            stereo_annotation: None,
+            stereo_annotation,
         })
         .collect();
 
@@ -428,6 +430,89 @@ fn render_mol_from_sdf(mol: &sdfrust::Molecule, sdf: &str) -> RenderMol {
         .collect();
 
     RenderMol { atoms, bonds }
+}
+
+fn extract_sdf_stereo_annotations(sdf: &str, mol: &sdfrust::Molecule) -> Vec<Option<String>> {
+    let mut annotations = vec![Vec::<String>::new(); mol.atoms.len()];
+
+    for (atom_idx, atom) in mol.atoms.iter().enumerate() {
+        if let Some(parity @ 1..=3) = atom.stereo_parity {
+            annotations[atom_idx].push(format!("CFG={parity}"));
+        }
+    }
+
+    for group in &mol.stereogroups {
+        let label = match group.group_type {
+            sdfrust::StereoGroupType::Absolute => "ABS".to_string(),
+            sdfrust::StereoGroupType::Or => format!("OR{}", group.group_number),
+            sdfrust::StereoGroupType::And => format!("AND{}", group.group_number),
+        };
+        for &atom_idx in &group.atoms {
+            push_stereo_annotation(&mut annotations, atom_idx, &label);
+        }
+    }
+
+    if mol.format_version == SdfFormat::V3000 {
+        let atom_ids = mol
+            .atoms
+            .iter()
+            .enumerate()
+            .map(|(atom_idx, atom)| (atom.v3000_id.unwrap_or((atom_idx + 1) as u32), atom_idx))
+            .collect::<HashMap<_, _>>();
+
+        for line in v3000_logical_lines(sdf) {
+            let Some(label) = v3000_stereo_group_label(&line) else {
+                continue;
+            };
+            let Some(start) = line.find("ATOMS=(") else {
+                continue;
+            };
+            let values = &line[start + "ATOMS=(".len()..];
+            let Some(end) = values.find(')') else {
+                continue;
+            };
+            for atom_id in values[..end]
+                .split_whitespace()
+                .skip(1)
+                .filter_map(|value| value.parse::<u32>().ok())
+            {
+                if let Some(&atom_idx) = atom_ids.get(&atom_id) {
+                    push_stereo_annotation(&mut annotations, atom_idx, &label);
+                }
+            }
+        }
+    }
+
+    annotations
+        .into_iter()
+        .map(|annotations| (!annotations.is_empty()).then(|| annotations.join("; ")))
+        .collect()
+}
+
+fn push_stereo_annotation(annotations: &mut [Vec<String>], atom_idx: usize, label: &str) {
+    let Some(atom_annotations) = annotations.get_mut(atom_idx) else {
+        return;
+    };
+    if !atom_annotations
+        .iter()
+        .any(|annotation| annotation == label)
+    {
+        atom_annotations.push(label.to_string());
+    }
+}
+
+fn v3000_stereo_group_label(line: &str) -> Option<String> {
+    let tag = line.split_whitespace().next()?.strip_prefix("MDLV30/")?;
+    let label = if tag == "STEABS" {
+        "ABS".to_string()
+    } else if let Some(group) = tag.strip_prefix("STEREL") {
+        format!("OR{}", if group.is_empty() { "1" } else { group })
+    } else if let Some(group) = tag.strip_prefix("STERAC") {
+        format!("AND{}", if group.is_empty() { "1" } else { group })
+    } else {
+        return None;
+    };
+    Some(label)
 }
 
 fn extract_sdf_atom_metadata(sdf: &str, mol: &sdfrust::Molecule) -> Vec<SdfAtomMetadata> {
@@ -657,6 +742,15 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
         let hydrogen_count = graph.atoms[atom_idx].hydrogens;
         for _ in 0..hydrogen_count {
             let hydrogen_idx = expanded.atoms.len();
+            if let Some(stereo) = &mut expanded.atoms[atom_idx].stereo {
+                if stereo.looking_from.is_none() {
+                    stereo.looking_from = Some(hydrogen_idx);
+                } else if stereo.atom1.is_none() {
+                    stereo.atom1 = Some(hydrogen_idx);
+                } else if stereo.atom2.is_none() {
+                    stereo.atom2 = Some(hydrogen_idx);
+                }
+            }
             expanded.atoms.push(SmilesAtom {
                 element: "H".to_string(),
                 atomic_number: 1,
@@ -715,6 +809,14 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
         });
     }
 
+    let chiral_neighbor_order = smiles_neighbor_order(smiles, molecule.nodes().len())
+        .unwrap_or_else(|| {
+            incident_bonds
+                .iter()
+                .map(|bonds| bonds.iter().map(|&(_, neighbor)| neighbor).collect())
+                .collect()
+        });
+
     let atoms = molecule
         .nodes()
         .iter()
@@ -733,7 +835,12 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
                 charge: node.atom().charge(),
                 isotope: node.atom().isotope(),
                 atom_map: node.class().map(u32::from),
-                stereo: atom_stereo_spec(atom_idx, node.chirality(), &incident_bonds),
+                stereo: atom_stereo_spec(
+                    atom_idx,
+                    node.chirality(),
+                    node.hydrogens(),
+                    &chiral_neighbor_order,
+                ),
                 stereo_annotation: chirality_annotation(node.chirality()),
             }
         })
@@ -750,10 +857,99 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
     })
 }
 
+fn smiles_neighbor_order(smiles: &str, atom_count: usize) -> Option<Vec<Vec<usize>>> {
+    let bytes = smiles.as_bytes();
+    let mut neighbors = vec![Vec::<Option<usize>>::new(); atom_count];
+    let mut current: Option<usize> = None;
+    let mut branches = Vec::new();
+    let mut rings = HashMap::<u16, (usize, usize)>::new();
+    let mut next_atom = 0usize;
+    let mut cursor = 0usize;
+
+    while cursor < bytes.len() {
+        let byte = bytes[cursor];
+        let atom_width = match byte {
+            b'[' => {
+                let end = bytes[cursor + 1..].iter().position(|&byte| byte == b']')?;
+                end + 2
+            }
+            b'*' => 1,
+            b'C' if bytes.get(cursor + 1) == Some(&b'l') => 2,
+            b'B' if bytes.get(cursor + 1) == Some(&b'r') => 2,
+            byte if byte.is_ascii_alphabetic() => 1,
+            _ => 0,
+        };
+
+        if atom_width > 0 {
+            if next_atom >= atom_count {
+                return None;
+            }
+            let atom = next_atom;
+            next_atom += 1;
+            if let Some(previous) = current {
+                neighbors[previous].push(Some(atom));
+                neighbors[atom].push(Some(previous));
+            }
+            current = Some(atom);
+            cursor += atom_width;
+            continue;
+        }
+
+        match byte {
+            b'(' => branches.push(current),
+            b')' => current = branches.pop()?,
+            b'.' => current = None,
+            b'%' => {
+                let first = *bytes.get(cursor + 1)?;
+                let second = *bytes.get(cursor + 2)?;
+                if !first.is_ascii_digit() || !second.is_ascii_digit() {
+                    return None;
+                }
+                let ring = u16::from(first - b'0') * 10 + u16::from(second - b'0');
+                record_ring_neighbor(&mut neighbors, &mut rings, current?, ring)?;
+                cursor += 3;
+                continue;
+            }
+            byte if byte.is_ascii_digit() => {
+                record_ring_neighbor(&mut neighbors, &mut rings, current?, u16::from(byte - b'0'))?;
+            }
+            b' ' | b'\t' | b'\r' | b'\n' => break,
+            _ => {}
+        }
+        cursor += 1;
+    }
+
+    if next_atom != atom_count || !branches.is_empty() || !rings.is_empty() {
+        return None;
+    }
+    neighbors
+        .into_iter()
+        .map(|neighbors| neighbors.into_iter().collect::<Option<Vec<_>>>())
+        .collect()
+}
+
+fn record_ring_neighbor(
+    neighbors: &mut [Vec<Option<usize>>],
+    rings: &mut HashMap<u16, (usize, usize)>,
+    atom: usize,
+    ring: u16,
+) -> Option<()> {
+    if let Some((opening_atom, opening_position)) = rings.remove(&ring) {
+        *neighbors.get_mut(opening_atom)?.get_mut(opening_position)? = Some(atom);
+        neighbors.get_mut(atom)?.push(Some(opening_atom));
+    } else {
+        let position = neighbors.get(atom)?.len();
+        neighbors.get_mut(atom)?.push(None);
+        rings.insert(ring, (atom, position));
+    }
+    Some(())
+}
+
 fn atom_stereo_spec(
     atom_idx: usize,
     chirality: Option<SmilesChirality>,
-    incident_bonds: &[Vec<(usize, usize)>],
+    hydrogen_count: u8,
+    neighbor_order: &[Vec<usize>],
 ) -> Option<AtomStereoSpec> {
     let direction = match chirality {
         Some(SmilesChirality::TH1) => AtomStereoDirection::CounterClockwise,
@@ -761,20 +957,34 @@ fn atom_stereo_spec(
         _ => return None,
     };
 
-    let neighbors = incident_bonds
-        .get(atom_idx)?
-        .iter()
-        .map(|&(_, neighbor)| neighbor)
-        .collect::<Vec<_>>();
+    let mut neighbors = Vec::with_capacity(4);
+    if hydrogen_count == 1 {
+        // OpenSMILES places a bracket hydrogen first in the local chiral
+        // neighbor order, even though it has no graph node yet.
+        neighbors.push(None);
+    } else if hydrogen_count > 1 {
+        return None;
+    }
+    neighbors.extend(
+        neighbor_order
+            .get(atom_idx)?
+            .iter()
+            .map(|&neighbor| Some(neighbor)),
+    );
 
-    if neighbors.len() < 3 || neighbors.len() > 4 {
+    if neighbors.len() == 3 {
+        // A three-coordinate tetrahedral center may use an implicit lone pair
+        // as its fourth neighbor. Coordgen represents that position as null.
+        neighbors.push(None);
+    }
+    if neighbors.len() != 4 {
         return None;
     }
 
     Some(AtomStereoSpec {
-        looking_from: neighbors.first().copied(),
-        atom1: neighbors.get(1).copied(),
-        atom2: neighbors.get(2).copied(),
+        looking_from: neighbors[0],
+        atom1: neighbors[1],
+        atom2: neighbors[2],
         direction,
     })
 }
@@ -1127,7 +1337,14 @@ fn ast_from_render_mol(
     let mut visited_nodes = vec![false; mol.atoms.len()];
     let mut handled_bonds = vec![false; mol.bonds.len()];
     let components = connected_components(&adj);
-    let labels = build_labels(mol, &adj, mode_str, &mut visited_nodes, &mut handled_bonds);
+    let labels = build_labels(
+        mol,
+        &adj,
+        mode_str,
+        stereo_map,
+        &mut visited_nodes,
+        &mut handled_bonds,
+    );
     let rings = find_rings(&adj, mol.atoms.len());
     let context = DfsContext {
         adj: &adj,
@@ -1169,6 +1386,7 @@ fn build_labels(
     mol: &RenderMol,
     adj: &[Vec<(usize, BondKind, usize)>],
     mode_str: &str,
+    stereo_map: &HashMap<(usize, usize), (u8, bool)>,
     visited_nodes: &mut [bool],
     handled_bonds: &mut [bool],
 ) -> Vec<RenderLabel> {
@@ -1179,7 +1397,7 @@ fn build_labels(
 
         if mode_str == "abbreviate" || mode_str == "skeletal" {
             if atom.element == "H" {
-                if is_foldable_hydrogen(i, mol, adj) {
+                if is_foldable_hydrogen(i, mol, adj, stereo_map) {
                     visited_nodes[i] = true;
                 } else {
                     labels[i] = render_label(atom, atom.hydrogens);
@@ -1187,7 +1405,8 @@ fn build_labels(
                 continue;
             }
 
-            let (explicit_h_count, explicit_h_bonds) = explicit_h_neighbors(i, mol, adj);
+            let (explicit_h_count, explicit_h_bonds) =
+                explicit_h_neighbors(i, mol, adj, stereo_map);
             for bond_idx in explicit_h_bonds {
                 handled_bonds[bond_idx] = true;
             }
@@ -1280,11 +1499,12 @@ fn explicit_h_neighbors(
     atom_idx: usize,
     mol: &RenderMol,
     adj: &[Vec<(usize, BondKind, usize)>],
+    stereo_map: &HashMap<(usize, usize), (u8, bool)>,
 ) -> (u8, Vec<usize>) {
     let mut count = 0u8;
     let mut bond_indices = Vec::new();
     for &(neighbor, _, bond_idx) in &adj[atom_idx] {
-        if is_foldable_hydrogen(neighbor, mol, adj) {
+        if is_foldable_hydrogen(neighbor, mol, adj, stereo_map) {
             count = count.saturating_add(1);
             bond_indices.push(bond_idx);
         }
@@ -1296,11 +1516,14 @@ fn is_foldable_hydrogen(
     atom_idx: usize,
     mol: &RenderMol,
     adj: &[Vec<(usize, BondKind, usize)>],
+    stereo_map: &HashMap<(usize, usize), (u8, bool)>,
 ) -> bool {
     mol.atoms[atom_idx].element == "H"
         && matches!(
             adj[atom_idx].as_slice(),
-            [(neighbor, _, _)] if mol.atoms[*neighbor].element != "H"
+            [(neighbor, _, _)]
+                if mol.atoms[*neighbor].element != "H"
+                    && !stereo_map.contains_key(&(atom_idx, *neighbor))
         )
 }
 
@@ -1326,7 +1549,7 @@ fn charge_suffix(charge: i8) -> String {
     }
 }
 
-fn extract_sdf_stereo(mol: &sdfrust::Molecule) -> HashMap<(usize, usize), (u8, bool)> {
+fn extract_sdf_stereo(mol: &sdfrust::Molecule, sdf: &str) -> HashMap<(usize, usize), (u8, bool)> {
     let mut map = HashMap::new();
     for bond in &mol.bonds {
         let stereo = match bond.stereo {
@@ -1338,6 +1561,29 @@ fn extract_sdf_stereo(mol: &sdfrust::Molecule) -> HashMap<(usize, usize), (u8, b
         if bond.atom1 < mol.atoms.len() && bond.atom2 < mol.atoms.len() {
             map.insert((bond.atom1, bond.atom2), (stereo, true));
             map.insert((bond.atom2, bond.atom1), (stereo, false));
+        }
+    }
+
+    if mol.format_version == SdfFormat::V2000 {
+        let lines = sdf.lines().collect::<Vec<_>>();
+        let atom_count = lines
+            .get(3)
+            .and_then(|line| line.get(0..3))
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+
+        for (bond_idx, bond) in mol.bonds.iter().enumerate() {
+            if bond.order != BondOrder::Double {
+                continue;
+            }
+            let stereo = lines
+                .get(4 + atom_count + bond_idx)
+                .and_then(|line| line.get(9..12))
+                .and_then(|value| value.trim().parse::<u8>().ok());
+            if stereo == Some(3) && bond.atom1 < mol.atoms.len() && bond.atom2 < mol.atoms.len() {
+                map.insert((bond.atom1, bond.atom2), (3, true));
+                map.insert((bond.atom2, bond.atom1), (3, false));
+            }
         }
     }
     map
@@ -1502,6 +1748,10 @@ fn bond_func_name(
     coordination_forward: bool,
     stereo_map: &HashMap<(usize, usize), (u8, bool)>,
 ) -> &'static str {
+    if kind == BondKind::Double && matches!(stereo_map.get(&(u, v)), Some(&(3 | 4, _))) {
+        return "crossed-double";
+    }
+
     if kind == BondKind::Single {
         if let Some(&(stereo, is_forward)) = stereo_map.get(&(u, v)) {
             match stereo {
@@ -1825,6 +2075,27 @@ mod tests {
         output
     }
 
+    fn collect_fragments(commands: &[Command], output: &mut Vec<(String, String, Option<String>)>) {
+        for command in commands {
+            match command {
+                Command::Fragment {
+                    element,
+                    name,
+                    annotation,
+                    ..
+                } => output.push((element.clone(), name.clone(), annotation.clone())),
+                Command::Branch { body } => collect_fragments(body, output),
+                _ => {}
+            }
+        }
+    }
+
+    fn fragment_data(commands: &[Command]) -> Vec<(String, String, Option<String>)> {
+        let mut output = Vec::new();
+        collect_fragments(commands, &mut output);
+        output
+    }
+
     fn v2000_bond(order: u8, stereo: u8) -> String {
         format!(
             concat!(
@@ -1929,6 +2200,95 @@ mod tests {
         let commands = sdf_to_commands(&v2000_bond(1, 4), RenderMode::Full).unwrap();
 
         assert_eq!(bond_data(&commands)[0].0, "either");
+    }
+
+    #[test]
+    fn sdf_preserves_undefined_double_bond_stereo_as_a_crossed_double() {
+        let v2000 = sdf_to_commands(&v2000_bond(2, 3), RenderMode::Full).unwrap();
+        let v3000 = concat!(
+            "undefined double\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 2 1 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 1 C 0.0000 0.0000 0.0000 0\n",
+            "M  V30 2 N 1.5000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 2 1 2 CFG=2\n",
+            "M  V30 END BOND\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+        let v3000 = sdf_to_commands(v3000, RenderMode::Full).unwrap();
+
+        assert_eq!(bond_data(&v2000)[0].0, "crossed-double");
+        assert_eq!(bond_data(&v3000)[0].0, "crossed-double");
+    }
+
+    #[test]
+    fn abbreviated_modes_do_not_fold_a_stereochemical_hydrogen_bond() {
+        let sdf = concat!(
+            "stereochemical hydrogen\n",
+            "  molchemist\n",
+            "\n",
+            "  5  4  0  0  0  0  0  0  0  0999 V2000\n",
+            "    0.0000    0.0000    0.0000 C   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    1.0000    0.0000    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "   -1.0000    0.0000    0.0000 F   0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    0.0000    1.0000    0.0000 Cl  0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "    0.0000   -1.0000    0.0000 Br  0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "  1  2  1  1  0  0  0\n",
+            "  1  3  1  0  0  0  0\n",
+            "  1  4  1  0  0  0  0\n",
+            "  1  5  1  0  0  0  0\n",
+            "M  END\n",
+        );
+
+        for mode in [RenderMode::Abbreviate, RenderMode::Skeletal] {
+            let commands = sdf_to_commands(sdf, mode).unwrap();
+            assert!(fragment_data(&commands)
+                .iter()
+                .any(|(element, name, _)| element == "H" && name == "a1"));
+            assert!(bond_data(&commands)
+                .iter()
+                .any(|(bond_type, _, _)| bond_type.starts_with("cram-filled")));
+        }
+    }
+
+    #[test]
+    fn sdf_preserves_atom_parity_and_enhanced_stereo_groups_as_annotations() {
+        let sdf = concat!(
+            "enhanced stereo\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 2 1 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 C 0.0000 0.0000 0.0000 0 CFG=1\n",
+            "M  V30 20 F 1.5000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 10 20\n",
+            "M  V30 END BOND\n",
+            "M  V30 BEGIN COLLECTION\n",
+            "M  V30 MDLV30/STEREL7 ATOMS=(1 10)\n",
+            "M  V30 END COLLECTION\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Skeletal).unwrap();
+        let carbon = fragment_data(&commands)
+            .into_iter()
+            .find(|(_, name, _)| name == "a0")
+            .unwrap();
+
+        assert_eq!(carbon.0, "C");
+        assert_eq!(carbon.2.as_deref(), Some("CFG=1; OR7"));
     }
 
     #[test]
@@ -2413,10 +2773,38 @@ mod tests {
         assert_eq!(atom_stereo.len(), 1);
         let (atom, looking_from, atom1, atom2, direction) = atom_stereo[0];
         assert_eq!(atom, 1);
-        assert_eq!(looking_from, 0);
-        assert_eq!(atom1, 2);
-        assert_eq!(atom2, 3);
+        assert_eq!(looking_from, u32::MAX);
+        assert_eq!(atom1, 0);
+        assert_eq!(atom2, 2);
         assert_eq!(direction, 1);
+    }
+
+    #[test]
+    fn leading_tetrahedral_center_places_implicit_hydrogen_first() {
+        let payload = smiles_to_layout_input(b"[C@H](F)(Cl)Br").unwrap();
+        let (_, _, atom_stereo, _) = decode_layout_input(&payload);
+
+        assert_eq!(atom_stereo, vec![(0, u32::MAX, 1, 2, 2)]);
+    }
+
+    #[test]
+    fn tetrahedral_ring_closure_uses_the_ring_tokens_lexical_position() {
+        let graph = parse_smiles_graph("[C@]1(Br)(Cl)CCCC(F)C1").unwrap();
+        let stereo = graph.atoms[0].stereo.unwrap();
+
+        assert_eq!(stereo.looking_from, Some(8));
+        assert_eq!(stereo.atom1, Some(1));
+        assert_eq!(stereo.atom2, Some(2));
+    }
+
+    #[test]
+    fn full_layout_replaces_chiral_implicit_hydrogen_with_its_explicit_atom() {
+        let payload = smiles_to_full_layout_input(b"[C@H](F)(Cl)Br").unwrap();
+        let (atoms, bonds, atom_stereo, _) = decode_layout_input(&payload);
+
+        assert_eq!(atoms.len(), 5);
+        assert_eq!(bonds.last(), Some(&(0, 4, 1)));
+        assert_eq!(atom_stereo, vec![(0, 4, 1, 2, 2)]);
     }
 
     #[test]
