@@ -78,6 +78,16 @@ fn typst_and_cli_outputs_match_exactly() {
         "stereochemistry SDF parity failed"
     );
 
+    let collapsed_sdf = include_str!("fixtures/layout-robustness.sdf");
+    let cli = generator
+        .sdf_to_code(collapsed_sdf, RenderMode::Skeletal, "3em", 2)
+        .unwrap();
+    assert_eq!(
+        wasm.get("collapsed-sdf").unwrap(),
+        &cli,
+        "collapsed-coordinate SDF parity failed"
+    );
+
     for (name, smiles, mode) in cases {
         let cli = generator.smiles_to_code(smiles, mode, "3em", 2).unwrap();
         assert_eq!(wasm.get(name).unwrap(), &cli, "parity failed for {name}");

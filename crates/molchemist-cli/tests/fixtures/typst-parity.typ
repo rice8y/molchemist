@@ -17,25 +17,46 @@
   ))
 }
 
+#let dump-sdf(sdf, mode, record: "1") = {
+  let record = bytes(record)
+  let layout-input = mol-plugin.sdf_record_to_layout_input(sdf, record)
+  if layout-input.len() == 0 {
+    return str(mol-plugin.sdf_record_to_code(
+      sdf,
+      bytes(mode),
+      record,
+      bytes("3em"),
+      bytes("2"),
+    ))
+  }
+  let coords = smiles-plugin.layout_coordinates(layout-input)
+  str(mol-plugin.sdf_record_to_code_with_coords(
+    sdf,
+    coords,
+    bytes(mode),
+    record,
+    bytes("3em"),
+    bytes("2"),
+  ))
+}
+
 #metadata((
-  sdf: str(mol-plugin.sdf_to_code(
+  sdf: dump-sdf(
     read("Structure2D_COMPOUND_CID_241.sdf", encoding: none),
-    bytes("abbreviate"),
-    bytes("3em"),
-    bytes("2"),
-  )),
-  bond-semantics: str(mol-plugin.sdf_to_code(
+    "abbreviate",
+  ),
+  bond-semantics: dump-sdf(
     read("bond-semantics.sdf", encoding: none),
-    bytes("full"),
-    bytes("3em"),
-    bytes("2"),
-  )),
-  stereochemistry: str(mol-plugin.sdf_to_code(
+    "full",
+  ),
+  stereochemistry: dump-sdf(
     read("stereochemistry.sdf", encoding: none),
-    bytes("skeletal"),
-    bytes("3em"),
-    bytes("2"),
-  )),
+    "skeletal",
+  ),
+  collapsed-sdf: dump-sdf(
+    read("layout-robustness.sdf", encoding: none),
+    "skeletal",
+  ),
   benzene: dump-smiles("c1ccccc1", "skeletal"),
   charged: dump-smiles("OCCc1c(C)[n+](=cs1)Cc2cnc(C)nc(N)2", "abbreviate"),
   chiral: dump-smiles("N[C@@H](C)C(=O)O", "full"),

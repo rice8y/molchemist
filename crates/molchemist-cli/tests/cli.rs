@@ -118,6 +118,27 @@ fn dumps_stereochemistry_without_folding_or_dropping_semantics() {
 }
 
 #[test]
+fn relayouts_sdf_records_with_collapsed_coordinates() {
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/layout-robustness.sdf");
+    let output = molchemist()
+        .args(["dump", fixture.to_str().unwrap(), "--mode", "skeletal"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "collapsed-coordinate dump failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("cram-filled-"));
+    assert!(!stdout.contains("atom-sep: base-sep * 0, name:"));
+    assert!(!stdout.contains("NaN"));
+    assert!(!stdout.contains("inf"));
+}
+
+#[test]
 fn dumps_extended_chirality_as_native_geometry() {
     let cases = [
         ("[Pt@SP2](F)(Cl)(Br)I", false),
@@ -483,6 +504,34 @@ fn local_typst_package_renders_stereochemistry_fidelity_cases() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixture = root.join("crates/molchemist-cli/tests/fixtures/stereochemistry-fidelity.typ");
     let pdf = temp_path("stereochemistry-fidelity").with_extension("pdf");
+
+    let compiled = Command::new("typst")
+        .current_dir(&root)
+        .args([
+            "compile",
+            fixture.to_str().unwrap(),
+            pdf.to_str().unwrap(),
+            "--root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        compiled.status.success(),
+        "Typst failed: {}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(pdf.exists());
+    fs::remove_file(pdf).unwrap();
+}
+
+#[test]
+#[ignore = "requires Typst and the alchemist package"]
+fn local_typst_package_recovers_collapsed_sdf_layouts() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let fixture = root.join("crates/molchemist-cli/tests/fixtures/layout-robustness.typ");
+    let pdf = temp_path("layout-robustness").with_extension("pdf");
 
     let compiled = Command::new("typst")
         .current_dir(&root)
