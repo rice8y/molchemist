@@ -158,7 +158,7 @@ struct RenderLabel {
     atom: Option<AtomLabel>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum AtomStereoDirection {
     Clockwise,
     CounterClockwise,
@@ -173,6 +173,7 @@ struct SmilesAtom {
     isotope: Option<u16>,
     atom_map: Option<u32>,
     stereo: Option<AtomStereoSpec>,
+    extended_stereo: Option<ExtendedAtomStereoSpec>,
     stereo_annotation: Option<String>,
 }
 
@@ -195,6 +196,7 @@ struct SmilesBond {
 struct SmilesGraph {
     atoms: Vec<SmilesAtom>,
     bonds: Vec<SmilesBond>,
+    neighbor_order: Vec<Vec<usize>>,
     double_bond_stereo: Vec<DoubleBondStereoSpec>,
 }
 
@@ -204,6 +206,37 @@ struct AtomStereoSpec {
     atom1: Option<usize>,
     atom2: Option<usize>,
     direction: AtomStereoDirection,
+}
+
+#[derive(Clone, Copy)]
+enum PlanarShape {
+    U,
+    Four,
+    Z,
+}
+
+#[derive(Clone)]
+enum ExtendedAtomStereoSpec {
+    Allene {
+        direction: AtomStereoDirection,
+    },
+    SquarePlanar {
+        ligands: [usize; 4],
+        shape: PlanarShape,
+    },
+    TrigonalBipyramidal {
+        axis_from: usize,
+        axis_to: usize,
+        equatorial: [usize; 3],
+        direction: AtomStereoDirection,
+    },
+    Octahedral {
+        axis_from: usize,
+        axis_to: usize,
+        equatorial: [usize; 4],
+        shape: PlanarShape,
+        direction: AtomStereoDirection,
+    },
 }
 
 #[derive(Clone)]
@@ -368,9 +401,11 @@ pub fn smiles_to_commands_with_coords(
     if mode == RenderMode::Full {
         graph = expand_smiles_graph_hydrogens(&graph);
     }
-    let coords = decode_coords(coords_data, graph.atoms.len(), graph.bonds.len())?;
-    let render_mol = render_mol_from_smiles(&graph, &coords.coords);
-    let stereo_map = build_smiles_stereo_map(&graph, &coords.bond_styles);
+    let mut coords = decode_coords(coords_data, graph.atoms.len(), graph.bonds.len())?;
+    let mut stereo_map = build_smiles_stereo_map(&graph, &coords.bond_styles);
+    let depicted_centers =
+        apply_extended_stereo_depictions(&graph, &mut coords.coords, &mut stereo_map);
+    let render_mol = render_mol_from_smiles(&graph, &coords.coords, &depicted_centers);
     Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
 }
 
@@ -696,12 +731,17 @@ fn parse_mdl_property_pairs(line: &str) -> Vec<(usize, i32)> {
     pairs
 }
 
-fn render_mol_from_smiles(graph: &SmilesGraph, coords: &[(f32, f32)]) -> RenderMol {
+fn render_mol_from_smiles(
+    graph: &SmilesGraph,
+    coords: &[(f32, f32)],
+    depicted_centers: &HashSet<usize>,
+) -> RenderMol {
     let atoms = graph
         .atoms
         .iter()
         .zip(coords.iter())
-        .map(|(atom, &(x, y))| RenderAtom {
+        .enumerate()
+        .map(|(atom_idx, (atom, &(x, y)))| RenderAtom {
             element: atom.element.clone(),
             x: x as f64,
             y: y as f64,
@@ -710,7 +750,9 @@ fn render_mol_from_smiles(graph: &SmilesGraph, coords: &[(f32, f32)]) -> RenderM
             isotope: atom.isotope,
             radical: None,
             atom_map: atom.atom_map,
-            stereo_annotation: atom.stereo_annotation.clone(),
+            stereo_annotation: (!depicted_centers.contains(&atom_idx))
+                .then(|| atom.stereo_annotation.clone())
+                .flatten(),
         })
         .collect::<Vec<_>>();
 
@@ -759,6 +801,7 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
                 isotope: None,
                 atom_map: None,
                 stereo: None,
+                extended_stereo: None,
                 stereo_annotation: None,
             });
             expanded.bonds.push(SmilesBond {
@@ -766,6 +809,10 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
                 atom2: hydrogen_idx,
                 kind: SmilesBondKind::Single,
             });
+            // Bracket hydrogens precede graph neighbors in OpenSMILES local
+            // stereochemical order.
+            expanded.neighbor_order[atom_idx].insert(0, hydrogen_idx);
+            expanded.neighbor_order.push(vec![atom_idx]);
         }
     }
 
@@ -841,6 +888,10 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
                     node.hydrogens(),
                     &chiral_neighbor_order,
                 ),
+                extended_stereo: extended_atom_stereo_spec(
+                    node.chirality(),
+                    chiral_neighbor_order.get(atom_idx).map(Vec::as_slice),
+                ),
                 stereo_annotation: chirality_annotation(node.chirality()),
             }
         })
@@ -853,6 +904,7 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
     Ok(SmilesGraph {
         atoms,
         bonds,
+        neighbor_order: chiral_neighbor_order,
         double_bond_stereo,
     })
 }
@@ -990,6 +1042,133 @@ fn atom_stereo_spec(
         direction,
     })
 }
+
+fn extended_atom_stereo_spec(
+    chirality: Option<SmilesChirality>,
+    neighbor_order: Option<&[usize]>,
+) -> Option<ExtendedAtomStereoSpec> {
+    let chirality = chirality?;
+    match chirality {
+        SmilesChirality::AL1 => Some(ExtendedAtomStereoSpec::Allene {
+            direction: AtomStereoDirection::CounterClockwise,
+        }),
+        SmilesChirality::AL2 => Some(ExtendedAtomStereoSpec::Allene {
+            direction: AtomStereoDirection::Clockwise,
+        }),
+        SmilesChirality::SP1 | SmilesChirality::SP2 | SmilesChirality::SP3 => {
+            let ligands = neighbor_order?.try_into().ok()?;
+            let shape = match chirality {
+                SmilesChirality::SP1 => PlanarShape::U,
+                SmilesChirality::SP2 => PlanarShape::Four,
+                SmilesChirality::SP3 => PlanarShape::Z,
+                _ => unreachable!(),
+            };
+            Some(ExtendedAtomStereoSpec::SquarePlanar { ligands, shape })
+        }
+        chirality
+            if (SmilesChirality::TB1 as u8..=SmilesChirality::TB20 as u8)
+                .contains(&(chirality as u8)) =>
+        {
+            let neighbors = neighbor_order?;
+            let number = usize::from(chirality as u8 - SmilesChirality::TB1 as u8);
+            let (from_position, to_position, direction) = TB_PERMUTATIONS[number];
+            let equatorial = neighbors
+                .iter()
+                .enumerate()
+                .filter(|(position, _)| *position != from_position && *position != to_position)
+                .map(|(_, &neighbor)| neighbor)
+                .collect::<Vec<_>>()
+                .try_into()
+                .ok()?;
+            Some(ExtendedAtomStereoSpec::TrigonalBipyramidal {
+                axis_from: *neighbors.get(from_position)?,
+                axis_to: *neighbors.get(to_position)?,
+                equatorial,
+                direction,
+            })
+        }
+        chirality
+            if (SmilesChirality::OH1 as u8..=SmilesChirality::OH30 as u8)
+                .contains(&(chirality as u8)) =>
+        {
+            let neighbors = neighbor_order?;
+            let number = usize::from(chirality as u8 - SmilesChirality::OH1 as u8);
+            let (to_position, shape, direction) = OH_PERMUTATIONS[number];
+            let equatorial = neighbors
+                .iter()
+                .enumerate()
+                .filter(|(position, _)| *position != 0 && *position != to_position)
+                .map(|(_, &neighbor)| neighbor)
+                .collect::<Vec<_>>()
+                .try_into()
+                .ok()?;
+            Some(ExtendedAtomStereoSpec::Octahedral {
+                axis_from: *neighbors.first()?,
+                axis_to: *neighbors.get(to_position)?,
+                equatorial,
+                shape,
+                direction,
+            })
+        }
+        _ => None,
+    }
+}
+
+const TB_PERMUTATIONS: [(usize, usize, AtomStereoDirection); 20] = [
+    (0, 4, AtomStereoDirection::CounterClockwise),
+    (0, 4, AtomStereoDirection::Clockwise),
+    (0, 3, AtomStereoDirection::CounterClockwise),
+    (0, 3, AtomStereoDirection::Clockwise),
+    (0, 2, AtomStereoDirection::CounterClockwise),
+    (0, 2, AtomStereoDirection::Clockwise),
+    (0, 1, AtomStereoDirection::CounterClockwise),
+    (0, 1, AtomStereoDirection::Clockwise),
+    (1, 4, AtomStereoDirection::CounterClockwise),
+    (1, 3, AtomStereoDirection::CounterClockwise),
+    (1, 4, AtomStereoDirection::Clockwise),
+    (1, 3, AtomStereoDirection::Clockwise),
+    (1, 2, AtomStereoDirection::CounterClockwise),
+    (1, 2, AtomStereoDirection::Clockwise),
+    (2, 4, AtomStereoDirection::CounterClockwise),
+    (2, 3, AtomStereoDirection::CounterClockwise),
+    (3, 4, AtomStereoDirection::CounterClockwise),
+    (3, 4, AtomStereoDirection::Clockwise),
+    (2, 3, AtomStereoDirection::Clockwise),
+    (2, 4, AtomStereoDirection::Clockwise),
+];
+
+const OH_PERMUTATIONS: [(usize, PlanarShape, AtomStereoDirection); 30] = [
+    (5, PlanarShape::U, AtomStereoDirection::CounterClockwise),
+    (5, PlanarShape::U, AtomStereoDirection::Clockwise),
+    (4, PlanarShape::U, AtomStereoDirection::CounterClockwise),
+    (5, PlanarShape::Z, AtomStereoDirection::CounterClockwise),
+    (4, PlanarShape::Z, AtomStereoDirection::CounterClockwise),
+    (3, PlanarShape::U, AtomStereoDirection::CounterClockwise),
+    (3, PlanarShape::Z, AtomStereoDirection::CounterClockwise),
+    (5, PlanarShape::Four, AtomStereoDirection::Clockwise),
+    (4, PlanarShape::Four, AtomStereoDirection::Clockwise),
+    (5, PlanarShape::Four, AtomStereoDirection::CounterClockwise),
+    (4, PlanarShape::Four, AtomStereoDirection::CounterClockwise),
+    (3, PlanarShape::Four, AtomStereoDirection::Clockwise),
+    (3, PlanarShape::Four, AtomStereoDirection::CounterClockwise),
+    (5, PlanarShape::Z, AtomStereoDirection::Clockwise),
+    (4, PlanarShape::Z, AtomStereoDirection::Clockwise),
+    (4, PlanarShape::U, AtomStereoDirection::Clockwise),
+    (3, PlanarShape::Z, AtomStereoDirection::Clockwise),
+    (3, PlanarShape::U, AtomStereoDirection::Clockwise),
+    (2, PlanarShape::U, AtomStereoDirection::CounterClockwise),
+    (2, PlanarShape::Z, AtomStereoDirection::CounterClockwise),
+    (2, PlanarShape::Four, AtomStereoDirection::Clockwise),
+    (2, PlanarShape::Four, AtomStereoDirection::CounterClockwise),
+    (2, PlanarShape::Z, AtomStereoDirection::Clockwise),
+    (2, PlanarShape::U, AtomStereoDirection::Clockwise),
+    (1, PlanarShape::U, AtomStereoDirection::CounterClockwise),
+    (1, PlanarShape::Z, AtomStereoDirection::CounterClockwise),
+    (1, PlanarShape::Four, AtomStereoDirection::Clockwise),
+    (1, PlanarShape::Four, AtomStereoDirection::CounterClockwise),
+    (1, PlanarShape::Z, AtomStereoDirection::Clockwise),
+    (1, PlanarShape::U, AtomStereoDirection::Clockwise),
+];
 
 fn chirality_annotation(chirality: Option<SmilesChirality>) -> Option<String> {
     match chirality {
@@ -1289,6 +1468,346 @@ fn build_smiles_stereo_map(
     }
 
     stereo_map
+}
+
+fn apply_extended_stereo_depictions(
+    graph: &SmilesGraph,
+    coords: &mut [(f32, f32)],
+    stereo_map: &mut HashMap<(usize, usize), (u8, bool)>,
+) -> HashSet<usize> {
+    let mut depicted = HashSet::new();
+
+    for center in 0..graph.atoms.len() {
+        let Some(spec) = graph.atoms[center].extended_stereo.clone() else {
+            continue;
+        };
+
+        let was_depicted = match spec {
+            ExtendedAtomStereoSpec::Allene { direction } => {
+                depict_allene_stereo(graph, center, direction, stereo_map)
+            }
+            ExtendedAtomStereoSpec::SquarePlanar { ligands, shape } => {
+                let targets = planar_target_angles(shape, None);
+                layout_coordination_center(graph, coords, center, &ligands, &targets)
+            }
+            ExtendedAtomStereoSpec::TrigonalBipyramidal {
+                axis_from,
+                axis_to,
+                equatorial,
+                direction,
+            } => {
+                let equatorial_targets = match direction {
+                    AtomStereoDirection::CounterClockwise => [90.0, 210.0, 330.0],
+                    AtomStereoDirection::Clockwise => [90.0, -30.0, -150.0],
+                };
+                let ligands = [
+                    axis_from,
+                    axis_to,
+                    equatorial[0],
+                    equatorial[1],
+                    equatorial[2],
+                ];
+                let targets = [
+                    0.0,
+                    180.0,
+                    equatorial_targets[0],
+                    equatorial_targets[1],
+                    equatorial_targets[2],
+                ];
+                if has_single_bond(graph, center, axis_from)
+                    && has_single_bond(graph, center, axis_to)
+                    && layout_coordination_center(graph, coords, center, &ligands, &targets)
+                {
+                    add_axis_stereo(stereo_map, center, axis_from, axis_to);
+                    true
+                } else {
+                    false
+                }
+            }
+            ExtendedAtomStereoSpec::Octahedral {
+                axis_from,
+                axis_to,
+                equatorial,
+                shape,
+                direction,
+            } => {
+                let planar_targets = planar_target_angles(shape, Some(direction));
+                let ligands = [
+                    axis_from,
+                    axis_to,
+                    equatorial[0],
+                    equatorial[1],
+                    equatorial[2],
+                    equatorial[3],
+                ];
+                let targets = [
+                    45.0,
+                    225.0,
+                    planar_targets[0],
+                    planar_targets[1],
+                    planar_targets[2],
+                    planar_targets[3],
+                ];
+                if has_single_bond(graph, center, axis_from)
+                    && has_single_bond(graph, center, axis_to)
+                    && layout_coordination_center(graph, coords, center, &ligands, &targets)
+                {
+                    add_axis_stereo(stereo_map, center, axis_from, axis_to);
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+
+        if was_depicted {
+            depicted.insert(center);
+        }
+    }
+
+    depicted
+}
+
+fn planar_target_angles(shape: PlanarShape, direction: Option<AtomStereoDirection>) -> [f64; 4] {
+    // The slots progress anticlockwise. The permutations are the three
+    // Hamiltonian path shapes defined by OpenSMILES: U, 4, and Z.
+    let slots = match shape {
+        PlanarShape::U => [0, 1, 2, 3],
+        PlanarShape::Four => [0, 2, 3, 1],
+        PlanarShape::Z => [0, 1, 3, 2],
+    };
+    let slot_angles = [90.0, 180.0, 270.0, 0.0];
+    let mut targets = slots.map(|slot| slot_angles[slot]);
+    if direction == Some(AtomStereoDirection::Clockwise) {
+        targets = targets.map(|target| 180.0 - target);
+    }
+    targets
+}
+
+fn layout_coordination_center<const N: usize>(
+    graph: &SmilesGraph,
+    coords: &mut [(f32, f32)],
+    center: usize,
+    ligands: &[usize; N],
+    target_angles: &[f64; N],
+) -> bool {
+    if center >= coords.len() || ligands.iter().any(|&ligand| ligand >= coords.len()) {
+        return false;
+    }
+
+    let Some(components) = ligand_branch_components(graph, center, ligands) else {
+        return false;
+    };
+    let (center_x, center_y) = coords[center];
+    let rotations = ligands
+        .iter()
+        .zip(target_angles.iter())
+        .map(|(&ligand, &target_angle)| {
+            let (ligand_x, ligand_y) = coords[ligand];
+            let dx = ligand_x - center_x;
+            let dy = ligand_y - center_y;
+            if dx.abs() < f32::EPSILON && dy.abs() < f32::EPSILON {
+                return None;
+            }
+            let current_angle = f64::from(dy).atan2(f64::from(dx));
+            current_angle
+                .is_finite()
+                .then_some(target_angle.to_radians() - current_angle)
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(rotations) = rotations else {
+        return false;
+    };
+
+    for (component, rotation) in components.iter().zip(rotations) {
+        let (sin_rotation, cos_rotation) = rotation.sin_cos();
+        for &atom in component {
+            let dx = f64::from(coords[atom].0 - center_x);
+            let dy = f64::from(coords[atom].1 - center_y);
+            coords[atom] = (
+                center_x + (dx * cos_rotation - dy * sin_rotation) as f32,
+                center_y + (dx * sin_rotation + dy * cos_rotation) as f32,
+            );
+        }
+    }
+
+    true
+}
+
+fn ligand_branch_components<const N: usize>(
+    graph: &SmilesGraph,
+    center: usize,
+    ligands: &[usize; N],
+) -> Option<Vec<Vec<usize>>> {
+    let mut adjacency = vec![Vec::new(); graph.atoms.len()];
+    for bond in &graph.bonds {
+        adjacency.get_mut(bond.atom1)?.push(bond.atom2);
+        adjacency.get_mut(bond.atom2)?.push(bond.atom1);
+    }
+
+    let mut claimed = HashSet::new();
+    let mut components = Vec::with_capacity(N);
+    for &ligand in ligands {
+        if !adjacency.get(center)?.contains(&ligand) || claimed.contains(&ligand) {
+            return None;
+        }
+
+        let mut component = Vec::new();
+        let mut queue = VecDeque::from([ligand]);
+        let mut visited = HashSet::from([center]);
+        while let Some(atom) = queue.pop_front() {
+            if !visited.insert(atom) {
+                continue;
+            }
+            component.push(atom);
+            for &neighbor in adjacency.get(atom)? {
+                if !visited.contains(&neighbor) {
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+        if component.iter().any(|atom| claimed.contains(atom)) {
+            return None;
+        }
+        claimed.extend(component.iter().copied());
+        components.push(component);
+    }
+
+    Some(components)
+}
+
+fn add_axis_stereo(
+    stereo_map: &mut HashMap<(usize, usize), (u8, bool)>,
+    center: usize,
+    axis_from: usize,
+    axis_to: usize,
+) {
+    insert_stereo_edge(stereo_map, center, axis_from, 1);
+    insert_stereo_edge(stereo_map, center, axis_to, 6);
+}
+
+fn depict_allene_stereo(
+    graph: &SmilesGraph,
+    center: usize,
+    direction: AtomStereoDirection,
+    stereo_map: &mut HashMap<(usize, usize), (u8, bool)>,
+) -> bool {
+    let double_neighbors = graph
+        .neighbor_order
+        .get(center)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|&neighbor| has_bond_kind(graph, center, neighbor, SmilesBondKind::Double))
+        .collect::<Vec<_>>();
+    let Ok([first_side, second_side]) = <[usize; 2]>::try_from(double_neighbors) else {
+        return false;
+    };
+    let Some((first_terminal, first_previous, first_length)) =
+        allene_terminal(graph, center, first_side)
+    else {
+        return false;
+    };
+    let Some((second_terminal, second_previous, second_length)) =
+        allene_terminal(graph, center, second_side)
+    else {
+        return false;
+    };
+    if (first_length + second_length) % 2 != 0 || first_terminal == second_terminal {
+        return false;
+    }
+
+    let first_substituents = allene_terminal_substituents(graph, first_terminal, first_previous);
+    let second_substituents = allene_terminal_substituents(graph, second_terminal, second_previous);
+    if first_substituents.is_empty()
+        || second_substituents.is_empty()
+        || first_substituents.len() + usize::from(graph.atoms[first_terminal].hydrogens) < 2
+        || second_substituents.len() + usize::from(graph.atoms[second_terminal].hydrogens) < 2
+    {
+        return false;
+    }
+
+    // OpenSMILES depicts the second terminal plane in perspective. For AL1
+    // its first substituent points away and the second points towards the
+    // viewer; AL2 reverses those two bonds.
+    let (first_style, second_style) = match direction {
+        AtomStereoDirection::CounterClockwise => (6, 1),
+        AtomStereoDirection::Clockwise => (1, 6),
+    };
+    let styles = [first_style, second_style];
+    let implicit_hydrogen_offset = usize::from(graph.atoms[second_terminal].hydrogens.min(1));
+    for (position, &substituent) in second_substituents.iter().enumerate() {
+        let Some(&style) = styles.get(implicit_hydrogen_offset + position) else {
+            break;
+        };
+        insert_stereo_edge(stereo_map, second_terminal, substituent, style);
+    }
+    true
+}
+
+fn allene_terminal(
+    graph: &SmilesGraph,
+    center: usize,
+    first: usize,
+) -> Option<(usize, usize, usize)> {
+    let mut previous = center;
+    let mut current = first;
+    let mut length = 1usize;
+    let mut visited = HashSet::from([center]);
+
+    loop {
+        if !visited.insert(current) {
+            return None;
+        }
+        let continuations = graph
+            .neighbor_order
+            .get(current)?
+            .iter()
+            .copied()
+            .filter(|&neighbor| {
+                neighbor != previous
+                    && has_bond_kind(graph, current, neighbor, SmilesBondKind::Double)
+            })
+            .collect::<Vec<_>>();
+        match continuations.as_slice() {
+            [] => return Some((current, previous, length)),
+            &[next] => {
+                previous = current;
+                current = next;
+                length += 1;
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn allene_terminal_substituents(
+    graph: &SmilesGraph,
+    terminal: usize,
+    previous: usize,
+) -> Vec<usize> {
+    graph
+        .neighbor_order
+        .get(terminal)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|&neighbor| {
+            neighbor != previous && has_bond_kind(graph, terminal, neighbor, SmilesBondKind::Single)
+        })
+        .collect()
+}
+
+fn has_single_bond(graph: &SmilesGraph, atom1: usize, atom2: usize) -> bool {
+    has_bond_kind(graph, atom1, atom2, SmilesBondKind::Single)
+}
+
+fn has_bond_kind(graph: &SmilesGraph, atom1: usize, atom2: usize, kind: SmilesBondKind) -> bool {
+    graph.bonds.iter().any(|bond| {
+        ((bond.atom1 == atom1 && bond.atom2 == atom2)
+            || (bond.atom1 == atom2 && bond.atom2 == atom1))
+            && bond.kind == kind
+    })
 }
 
 fn insert_stereo_edge(
@@ -2030,6 +2549,21 @@ mod tests {
         }
         coords.extend(std::iter::repeat_n(0, bond_count));
         coords
+    }
+
+    fn atom_angle(coords: &[(f32, f32)], center: usize, atom: usize) -> f64 {
+        let dx = f64::from(coords[atom].0 - coords[center].0);
+        let dy = f64::from(coords[atom].1 - coords[center].1);
+        dy.atan2(dx).to_degrees().rem_euclid(360.0)
+    }
+
+    fn assert_angle(actual: f64, expected: f64) {
+        let difference = (actual - expected.rem_euclid(360.0)).abs();
+        let circular_difference = difference.min(360.0 - difference);
+        assert!(
+            circular_difference < 1e-4,
+            "expected {expected} degrees, got {actual}"
+        );
     }
 
     fn first_fragment(commands: &[Command]) -> (&str, Option<&AtomLabel>) {
@@ -2833,7 +3367,7 @@ mod tests {
     }
 
     #[test]
-    fn non_tetrahedral_chirality_is_preserved_in_ast_annotations() {
+    fn square_planar_chirality_is_rendered_without_a_text_annotation() {
         let mut coords = Vec::new();
         coords.extend_from_slice(COORD_MAGIC);
         coords.extend_from_slice(&(5u32).to_le_bytes());
@@ -2862,11 +3396,194 @@ mod tests {
         let first_annotation = first
             .iter()
             .find(|(key, _)| key.as_text() == Some("annotation"))
-            .and_then(|(_, value)| value.as_text())
-            .unwrap();
+            .and_then(|(_, value)| value.as_text());
 
         assert_eq!(first_label, "Pt");
-        assert_eq!(first_annotation, "@SP1");
+        assert_eq!(first_annotation, None);
+    }
+
+    #[test]
+    fn square_planar_permutations_produce_u_four_and_z_paths() {
+        let cases = [
+            ("[Pt@SP1](F)(Cl)(Br)I", [90.0, 180.0, 270.0, 0.0]),
+            ("[Pt@SP2](F)(Cl)(Br)I", [90.0, 270.0, 0.0, 180.0]),
+            ("[Pt@SP3](F)(Cl)(Br)I", [90.0, 180.0, 0.0, 270.0]),
+        ];
+
+        for (smiles, expected) in cases {
+            let graph = parse_smiles_graph(smiles).unwrap();
+            let mut coords = vec![(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)];
+            let mut stereo_map = HashMap::new();
+            let depicted = apply_extended_stereo_depictions(&graph, &mut coords, &mut stereo_map);
+
+            assert_eq!(depicted, HashSet::from([0]));
+            assert!(stereo_map.is_empty());
+            for (ligand, expected_angle) in (1..=4).zip(expected) {
+                assert_angle(atom_angle(&coords, 0, ligand), expected_angle);
+            }
+        }
+    }
+
+    #[test]
+    fn trigonal_bipyramidal_permutation_sets_axis_and_winding() {
+        let cases = [
+            ("[As@TB5](F)(Cl)(Br)(N)S", [90.0, 210.0, 330.0]),
+            ("[As@TB6](F)(Cl)(Br)(N)S", [90.0, 330.0, 210.0]),
+        ];
+
+        for (smiles, equatorial_angles) in cases {
+            let graph = parse_smiles_graph(smiles).unwrap();
+            let mut coords = vec![
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+                (-1.0, 0.0),
+                (0.0, -1.0),
+                (1.0, 1.0),
+            ];
+            let mut stereo_map = HashMap::new();
+            let depicted = apply_extended_stereo_depictions(&graph, &mut coords, &mut stereo_map);
+
+            assert_eq!(depicted, HashSet::from([0]));
+            assert_eq!(stereo_map.get(&(0, 1)), Some(&(1, true)));
+            assert_eq!(stereo_map.get(&(0, 3)), Some(&(6, true)));
+            for (ligand, expected_angle) in [2, 4, 5].into_iter().zip(equatorial_angles) {
+                assert_angle(atom_angle(&coords, 0, ligand), expected_angle);
+            }
+        }
+    }
+
+    #[test]
+    fn octahedral_permutation_sets_axis_shape_and_winding() {
+        let graph = parse_smiles_graph("[Co@OH5](F)(Cl)(Br)(I)(N)S").unwrap();
+        let mut coords = vec![
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (-1.0, 0.0),
+            (0.0, -1.0),
+            (1.0, 1.0),
+            (-1.0, -1.0),
+        ];
+        let mut stereo_map = HashMap::new();
+        let depicted = apply_extended_stereo_depictions(&graph, &mut coords, &mut stereo_map);
+
+        assert_eq!(depicted, HashSet::from([0]));
+        assert_eq!(stereo_map.get(&(0, 1)), Some(&(1, true)));
+        assert_eq!(stereo_map.get(&(0, 5)), Some(&(6, true)));
+        for (ligand, expected_angle) in [2, 3, 4, 6].into_iter().zip([90.0, 180.0, 0.0, 270.0]) {
+            assert_angle(atom_angle(&coords, 0, ligand), expected_angle);
+        }
+    }
+
+    #[test]
+    fn every_tb_and_oh_permutation_has_a_native_depiction() {
+        for number in 1..=20 {
+            let graph = parse_smiles_graph(&format!("[As@TB{number}](F)(Cl)(Br)(N)S")).unwrap();
+            let mut coords = vec![
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+                (-1.0, 0.0),
+                (0.0, -1.0),
+                (1.0, 1.0),
+            ];
+            let mut stereo_map = HashMap::new();
+
+            assert_eq!(
+                apply_extended_stereo_depictions(&graph, &mut coords, &mut stereo_map),
+                HashSet::from([0]),
+                "@TB{number}"
+            );
+            assert_eq!(stereo_map.len(), 4, "@TB{number}");
+        }
+
+        for number in 1..=30 {
+            let graph = parse_smiles_graph(&format!("[Co@OH{number}](F)(Cl)(Br)(I)(N)S")).unwrap();
+            let mut coords = vec![
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+                (-1.0, 0.0),
+                (0.0, -1.0),
+                (1.0, 1.0),
+                (-1.0, -1.0),
+            ];
+            let mut stereo_map = HashMap::new();
+
+            assert_eq!(
+                apply_extended_stereo_depictions(&graph, &mut coords, &mut stereo_map),
+                HashSet::from([0]),
+                "@OH{number}"
+            );
+            assert_eq!(stereo_map.len(), 4, "@OH{number}");
+        }
+    }
+
+    #[test]
+    fn allene_variants_reverse_terminal_wedges() {
+        for (chirality, expected) in [("AL1", (6, 1)), ("AL2", (1, 6))] {
+            let graph = parse_smiles_graph(&format!("NC(Br)=[C@{chirality}]=C(O)C")).unwrap();
+            let mut coords = vec![(0.0, 0.0); graph.atoms.len()];
+            let mut stereo_map = HashMap::new();
+            let depicted = apply_extended_stereo_depictions(&graph, &mut coords, &mut stereo_map);
+
+            assert_eq!(depicted, HashSet::from([3]));
+            assert_eq!(stereo_map.get(&(4, 5)), Some(&(expected.0, true)));
+            assert_eq!(stereo_map.get(&(4, 6)), Some(&(expected.1, true)));
+        }
+    }
+
+    #[test]
+    fn allene_implicit_hydrogen_keeps_the_same_parity_in_full_and_skeletal_modes() {
+        let graph = parse_smiles_graph("NC(Br)=[C@AL1]=CO").unwrap();
+        let mut skeletal_coords = vec![(0.0, 0.0); graph.atoms.len()];
+        let mut skeletal_stereo = HashMap::new();
+        let skeletal_depicted =
+            apply_extended_stereo_depictions(&graph, &mut skeletal_coords, &mut skeletal_stereo);
+
+        assert_eq!(skeletal_depicted, HashSet::from([3]));
+        assert_eq!(graph.atoms[4].hydrogens, 1);
+        assert_eq!(skeletal_stereo.get(&(4, 5)), Some(&(1, true)));
+
+        let full_graph = expand_smiles_graph_hydrogens(&graph);
+        let mut full_coords = vec![(0.0, 0.0); full_graph.atoms.len()];
+        let mut full_stereo = HashMap::new();
+        let full_depicted =
+            apply_extended_stereo_depictions(&full_graph, &mut full_coords, &mut full_stereo);
+        let terminal_hydrogen = full_graph.neighbor_order[4][0];
+
+        assert_eq!(full_depicted, HashSet::from([3]));
+        assert_eq!(full_graph.atoms[terminal_hydrogen].element, "H");
+        assert_eq!(full_stereo.get(&(4, terminal_hydrogen)), Some(&(6, true)));
+        assert_eq!(full_stereo.get(&(4, 5)), Some(&(1, true)));
+    }
+
+    #[test]
+    fn unsupported_extended_topology_keeps_its_annotation_fallback() {
+        let graph = parse_smiles_graph("[C@AL1](F)(Cl)C").unwrap();
+        let mut coords = vec![(0.0, 0.0); graph.atoms.len()];
+        let mut stereo_map = HashMap::new();
+
+        assert!(apply_extended_stereo_depictions(&graph, &mut coords, &mut stereo_map).is_empty());
+        assert_eq!(graph.atoms[0].stereo_annotation.as_deref(), Some("@AL1"));
+
+        let cyclic = parse_smiles_graph("[Pt@SP1]1(F)(Cl)CCC1").unwrap();
+        let mut cyclic_coords = (0..cyclic.atoms.len())
+            .map(|atom| {
+                let angle = atom as f32;
+                (angle.cos(), angle.sin())
+            })
+            .collect::<Vec<_>>();
+        let mut cyclic_stereo_map = HashMap::new();
+
+        assert!(apply_extended_stereo_depictions(
+            &cyclic,
+            &mut cyclic_coords,
+            &mut cyclic_stereo_map,
+        )
+        .is_empty());
+        assert_eq!(cyclic.atoms[0].stereo_annotation.as_deref(), Some("@SP1"));
     }
 
     #[test]
@@ -2880,5 +3597,21 @@ mod tests {
         assert_eq!(sp.atoms[0].stereo_annotation.as_deref(), Some("@SP2"));
         assert_eq!(tb.atoms[0].stereo_annotation.as_deref(), Some("@TB5"));
         assert_eq!(oh.atoms[0].stereo_annotation.as_deref(), Some("@OH5"));
+        assert!(matches!(
+            al.atoms[0].extended_stereo,
+            Some(ExtendedAtomStereoSpec::Allene { .. })
+        ));
+        assert!(matches!(
+            sp.atoms[0].extended_stereo,
+            Some(ExtendedAtomStereoSpec::SquarePlanar { .. })
+        ));
+        assert!(matches!(
+            tb.atoms[0].extended_stereo,
+            Some(ExtendedAtomStereoSpec::TrigonalBipyramidal { .. })
+        ));
+        assert!(matches!(
+            oh.atoms[0].extended_stereo,
+            Some(ExtendedAtomStereoSpec::Octahedral { .. })
+        ));
     }
 }

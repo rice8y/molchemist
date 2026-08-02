@@ -846,7 +846,7 @@ SMILES support is a parse-and-layout pipeline. The parser accepts common SMILES 
 )
 ```)
 
-Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are accepted, but they are currently preserved as textual stereo annotations rather than native geometric depictions.
+Extended OpenSMILES chirality classes are rendered geometrically when their topology permits an unambiguous projection. `@AL` uses terminal wedge/dash bonds, `@SP` uses its U/4/Z ligand path, and `@TB` / `@OH` combine the specified ligand winding with solid and hashed viewing-axis bonds. Invalid or cyclic topologies that cannot be rearranged safely retain their original chirality tag as a fallback annotation.
 
 = API Reference
 
@@ -1054,11 +1054,13 @@ Extended OpenSMILES chirality classes such as `@AL`, `@SP`, `@TB`, and `@OH` are
   ]
 ]
 
+#pagebreak(weak: true)
+
 = Limitations and Roadmap
 
 - Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space.
 - SMILES layout is generated internally and may not match the exact layout from an external chemical drawing program.
-- Extended OpenSMILES chirality classes are preserved as textual stereo annotations rather than native geometric depictions because Alchemist does not currently provide geometry-specific primitives for those classes.
+- Extended-chirality layout rotates ligand branches around a stereocenter. A center embedded in a cycle may therefore fall back to a textual chirality annotation when its branches cannot be moved independently without distorting the cycle.
 - Annotation helpers are intentionally minimal. For complex figure composition, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
 
 = License and Dependencies

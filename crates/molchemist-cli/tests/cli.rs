@@ -118,6 +118,32 @@ fn dumps_stereochemistry_without_folding_or_dropping_semantics() {
 }
 
 #[test]
+fn dumps_extended_chirality_as_native_geometry() {
+    let cases = [
+        ("[Pt@SP2](F)(Cl)(Br)I", false),
+        ("[As@TB5](F)(Cl)(Br)(N)S", true),
+        ("[Co@OH5](F)(Cl)(Br)(I)(N)S", true),
+        ("NC(Br)=[C@AL1]=C(O)C", true),
+    ];
+
+    for (smiles, expects_stereo_bond) in cases {
+        let output = molchemist()
+            .args(["dump", "--smiles", smiles, "--mode", "skeletal"])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "extended chirality dump failed for {smiles}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains("Stereo annotations:"), "{smiles}");
+        assert_eq!(stdout.contains("cram-"), expects_stereo_bond, "{smiles}");
+    }
+}
+
+#[test]
 fn reads_direct_text_with_an_explicit_format() {
     let output = molchemist()
         .args([
