@@ -902,8 +902,10 @@
 
 /// Render a molecule from Molfile or SDF data.
 ///
-/// Input coordinates are preserved. On Typst 0.15.0 and later, `data` may be a
-/// `path`; earlier versions should pass the result of `read`.
+/// Input coordinates are preserved when they form a usable 2D layout. Records
+/// with collapsed or numerically unstable coordinates are laid out with
+/// Coordgen. On Typst 0.15.0 and later, `data` may be a `path`; earlier versions
+/// should pass the result of `read`.
 ///
 /// - data (any): Molfile/SDF text, bytes, or a Typst 0.15.0+ path.
 /// - record (int): One-based record number for multi-record SDF input.
@@ -929,12 +931,28 @@
   let base-sep = config.at("atom-sep", default: 3em)
   let mol-data = _mol-data-to-bytes(data)
   let record-data = bytes(str(record))
+  let layout-input = mol-plugin.sdf_record_to_layout_input(mol-data, record-data)
+  let fallback-coords = if layout-input.len() > 0 {
+    smiles-plugin.layout_coordinates(layout-input)
+  } else {
+    none
+  }
 
   if dump {
-    let code = str(mol-plugin.sdf_record_to_code(mol-data, bytes(mode), record-data, bytes(repr(base-sep)), bytes("2")))
+    let code = if fallback-coords == none {
+      mol-plugin.sdf_record_to_code(mol-data, bytes(mode), record-data, bytes(repr(base-sep)), bytes("2"))
+    } else {
+      mol-plugin.sdf_record_to_code_with_coords(mol-data, fallback-coords, bytes(mode), record-data, bytes(repr(base-sep)), bytes("2"))
+    }
+    let code = str(code)
     return raw(code, block: true, lang: "typst")
   } else {
-    let ast = cbor(mol-plugin.sdf_record_to_ast(mol-data, bytes(mode), record-data))
+    let ast-data = if fallback-coords == none {
+      mol-plugin.sdf_record_to_ast(mol-data, bytes(mode), record-data)
+    } else {
+      mol-plugin.sdf_record_to_ast_with_coords(mol-data, fallback-coords, bytes(mode), record-data)
+    }
+    let ast = cbor(ast-data)
     let rendered = _render-graphic(ast, base-sep, config: config, overlay-annotations: annotations, show-indices: show-indices)
     _render-with-stereo-annotations(ast, rendered)
   }

@@ -17,6 +17,26 @@ pub fn sdf_record_to_ast(
 }
 
 #[wasm_func]
+pub fn sdf_record_to_layout_input(sdf_data: &[u8], record: &[u8]) -> Result<Vec<u8>, String> {
+    molchemist_core::sdf_record_to_layout_input(sdf_data, parse_record(record)?)
+}
+
+#[wasm_func]
+pub fn sdf_record_to_ast_with_coords(
+    sdf_data: &[u8],
+    coords_data: &[u8],
+    options: &[u8],
+    record: &[u8],
+) -> Result<Vec<u8>, String> {
+    molchemist_core::sdf_record_to_ast_with_coords(
+        sdf_data,
+        coords_data,
+        options,
+        parse_record(record)?,
+    )
+}
+
+#[wasm_func]
 pub fn smiles_to_layout_input(smiles_data: &[u8]) -> Result<Vec<u8>, String> {
     molchemist_core::smiles_to_layout_input(smiles_data)
 }
@@ -62,6 +82,27 @@ pub fn sdf_record_to_code(
     let indent = parse_indent(indent)?;
     let commands =
         molchemist_core::sdf_record_to_commands(sdf, render_mode(options), parse_record(record)?)?;
+    Ok(molchemist_core::format_alchemist(&commands, base_sep, indent).into_bytes())
+}
+
+#[wasm_func]
+pub fn sdf_record_to_code_with_coords(
+    sdf_data: &[u8],
+    coords_data: &[u8],
+    options: &[u8],
+    record: &[u8],
+    base_sep: &[u8],
+    indent: &[u8],
+) -> Result<Vec<u8>, String> {
+    let sdf = std::str::from_utf8(sdf_data).map_err(|error| error.to_string())?;
+    let base_sep = std::str::from_utf8(base_sep).map_err(|error| error.to_string())?;
+    let indent = parse_indent(indent)?;
+    let commands = molchemist_core::sdf_record_to_commands_with_coords(
+        sdf,
+        coords_data,
+        render_mode(options),
+        parse_record(record)?,
+    )?;
     Ok(molchemist_core::format_alchemist(&commands, base_sep, indent).into_bytes())
 }
 

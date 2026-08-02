@@ -42,16 +42,39 @@ impl Generator {
     ) -> Result<String, String> {
         let record = record.to_string();
         let indent = indent.to_string();
-        let output = self.core.call(
-            "sdf_record_to_code",
-            &[
-                sdf.as_bytes(),
-                mode.as_str().as_bytes(),
-                record.as_bytes(),
-                atom_sep.as_bytes(),
-                indent.as_bytes(),
-            ],
+        let layout_input = self.core.call(
+            "sdf_record_to_layout_input",
+            &[sdf.as_bytes(), record.as_bytes()],
         )?;
+        let output = if layout_input.is_empty() {
+            self.core.call(
+                "sdf_record_to_code",
+                &[
+                    sdf.as_bytes(),
+                    mode.as_str().as_bytes(),
+                    record.as_bytes(),
+                    atom_sep.as_bytes(),
+                    indent.as_bytes(),
+                ],
+            )?
+        } else {
+            let layout = match &mut self.layout {
+                Some(layout) => layout,
+                None => self.layout.insert(Plugin::new(LAYOUT_WASM)?),
+            };
+            let coordinates = layout.call("layout_coordinates", &[&layout_input])?;
+            self.core.call(
+                "sdf_record_to_code_with_coords",
+                &[
+                    sdf.as_bytes(),
+                    &coordinates,
+                    mode.as_str().as_bytes(),
+                    record.as_bytes(),
+                    atom_sep.as_bytes(),
+                    indent.as_bytes(),
+                ],
+            )?
+        };
         String::from_utf8(output).map_err(|_| "core plugin returned non-UTF-8 source".to_string())
     }
 

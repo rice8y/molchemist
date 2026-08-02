@@ -130,6 +130,8 @@ molchemist dump structures.sdf --record 2 --mode skeletal
 
 Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers produce an explicit error instead of an empty drawing.
 
+Usable 2D coordinates are preserved exactly. If all bonded atoms collapse onto the same XY positions, a 3D record has no usable XY projection, or bond lengths are numerically unstable, `molchemist` generates a fresh 2D layout with Coordgen. Atom metadata, bond semantics, and stereochemical wedges/dashes still come from the selected SDF record.
+
 ### Bond Semantics
 
 SDF bond orders are retained through the complete parser, AST, package, and CLI pipeline. In addition to single, double, and triple bonds, `molchemist` distinguishes aromatic, single-or-double, single-or-aromatic, double-or-aromatic, any, coordination/dative, and hydrogen bonds. V2000 `either` stereochemistry is also preserved instead of being drawn as an ordinary single bond.
@@ -169,7 +171,7 @@ Under the hood, `molchemist` parses the graph and generates native `alchemist` e
 
 **Important Note on Configuration:**
 
-- **Routing overrides:** Because `molchemist` maps the exact 2D absolute coordinates from the source `.sdf`/`.mol` file, `alchemist`'s automatic routing configs (like `angle-increment`, `base-angle`) are bypassed and have no effect.
+- **Routing overrides:** Because `molchemist` maps absolute 2D coordinates from the source `.sdf`/`.mol` file or its automatic fallback layout, `alchemist`'s automatic routing configs (like `angle-increment`, `base-angle`) are bypassed and have no effect.
 - **Lewis Structures:** `molchemist` does not automatically infer or generate Lewis structures from SDF files, so `lewis-*` configs are not applicable out of the box.
 
 ### Advanced: Ejecting to Alchemist Code (Dump Mode)
@@ -199,7 +201,7 @@ The CLI embeds the same WASM conversion modules as this Typst package, so its de
 
 ## Known Limitations
 
-When rendering highly complex or dense molecules (e.g., polycyclic compounds, dense substituents) in the default **Full Mode**, you may encounter overlapping atoms or intersecting bonds. This occurs because the 2D absolute coordinates provided in the source `.sdf`/`.mol` files might not allocate enough physical space on the canvas to draw every explicit text label without collisions.
+When rendering highly complex or dense molecules (e.g., polycyclic compounds, dense substituents) in the default **Full Mode**, you may encounter overlapping atoms or intersecting bonds. An otherwise valid 2D layout might not allocate enough physical space on the canvas to draw every explicit text label without collisions. Automatic SDF relayout is intentionally limited to collapsed or numerically unusable coordinates; it does not replace a valid source layout solely to optimize label spacing.
 
 **Recommended Workarounds:**
 
@@ -227,7 +229,7 @@ Extended OpenSMILES chirality classes are depicted natively when their topology 
 
 | Function | Input | Description |
 | --- | --- | --- |
-| `render-mol` | `data: str`, `bytes`, or Typst 0.15+ `path` | Renders V2000/V3000 Molfile or SDF data. Coordinates are read from the input. |
+| `render-mol` | `data: str`, `bytes`, or Typst 0.15+ `path` | Renders V2000/V3000 Molfile or SDF data. Usable input coordinates are preserved; unusable coordinates receive a generated 2D layout. |
 | `render-smiles` | `smiles: str` | Parses SMILES, generates a 2D layout, and renders the result. |
 
 Both renderers accept the same options:

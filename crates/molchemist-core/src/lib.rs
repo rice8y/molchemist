@@ -20,9 +20,10 @@ mod formatter;
 mod native_layout;
 
 pub use engine::{
-    sdf_record_to_ast, sdf_record_to_commands, sdf_to_ast, sdf_to_commands, smiles_layout_input,
-    smiles_to_ast, smiles_to_commands_with_coords, smiles_to_full_layout_input,
-    smiles_to_layout_input, AtomLabel, Command, LinkData, RenderMode,
+    sdf_record_to_ast, sdf_record_to_ast_with_coords, sdf_record_to_commands,
+    sdf_record_to_commands_with_coords, sdf_record_to_layout_input, sdf_to_ast, sdf_to_commands,
+    smiles_layout_input, smiles_to_ast, smiles_to_commands_with_coords,
+    smiles_to_full_layout_input, smiles_to_layout_input, AtomLabel, Command, LinkData, RenderMode,
 };
 pub use formatter::{
     format_alchemist, format_standalone, format_standalone_code, StandaloneOptions,
