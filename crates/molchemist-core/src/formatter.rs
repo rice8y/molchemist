@@ -73,6 +73,22 @@ const EXTENDED_BOND_DEFINITIONS: &str = r#"#import "@preview/cetz:0.5.2"
   )
 })
 
+#let _molchemist-quadruple = build-link((length, ctx, cetz-ctx, args) => {
+  import cetz.draw: *
+  let gap = utils.convert-length(
+    cetz-ctx,
+    args.at("gap", default: ctx.config.double.gap),
+  )
+  let stroke = args.at("stroke", default: ctx.config.double.stroke)
+  for offset in (-1.5, -0.5, 0.5, 1.5) {
+    line(
+      (0, offset * gap),
+      (length, offset * gap),
+      stroke: stroke,
+    )
+  }
+})
+
 #let _molchemist-coordination-right = build-link((length, ctx, _, args) => {
   import cetz.draw: *
   line(
@@ -372,6 +388,7 @@ fn is_extended_bond(bond_type: &str) -> bool {
     matches!(
         bond_type,
         "aromatic"
+            | "quadruple"
             | "single-or-double"
             | "single-or-aromatic"
             | "double-or-aromatic"
@@ -387,6 +404,7 @@ fn is_extended_bond(bond_type: &str) -> bool {
 fn bond_function_name(bond_type: &str) -> &str {
     match bond_type {
         "aromatic" => "_molchemist-aromatic",
+        "quadruple" => "_molchemist-quadruple",
         "single-or-double" => "_molchemist-single-or-double",
         "single-or-aromatic" => "_molchemist-single-or-aromatic",
         "double-or-aromatic" => "_molchemist-double-or-aromatic",
@@ -608,6 +626,22 @@ mod tests {
 
         assert!(output.contains("#let _molchemist-crossed-double = build-link"));
         assert!(output.contains("_molchemist-crossed-double(absolute: 0deg"));
+    }
+
+    #[test]
+    fn quadruple_emits_its_self_contained_typst_helper() {
+        let commands = vec![Command::Bond {
+            name: "b0".to_string(),
+            bond_type: "quadruple".to_string(),
+            angle: 0.0,
+            offset: None,
+            length_scale: 1.0,
+        }];
+
+        let output = format_alchemist(&commands, "3em", 2);
+
+        assert!(output.contains("#let _molchemist-quadruple = build-link"));
+        assert!(output.contains("_molchemist-quadruple(absolute: 0deg"));
     }
 
     #[test]

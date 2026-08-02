@@ -98,6 +98,7 @@ enum BondKind {
     Single,
     Double,
     Triple,
+    Quadruple,
     Aromatic,
     SingleOrDouble,
     SingleOrAromatic,
@@ -182,6 +183,7 @@ enum SmilesBondKind {
     Single,
     Double,
     Triple,
+    Quadruple,
     Aromatic,
 }
 
@@ -897,6 +899,7 @@ fn render_mol_from_smiles(
                 SmilesBondKind::Single => BondKind::Single,
                 SmilesBondKind::Double => BondKind::Double,
                 SmilesBondKind::Triple => BondKind::Triple,
+                SmilesBondKind::Quadruple => BondKind::Quadruple,
                 SmilesBondKind::Aromatic => BondKind::Single,
             },
         })
@@ -976,11 +979,9 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
             }
             SmilesBondType::Double => SmilesBondKind::Double,
             SmilesBondType::Triple => SmilesBondKind::Triple,
+            SmilesBondType::Quadruple => SmilesBondKind::Quadruple,
             SmilesBondType::Aromatic => SmilesBondKind::Aromatic,
             SmilesBondType::Disconnected => continue,
-            SmilesBondType::Quadruple => {
-                return Err("Quadruple bonds are not supported yet".to_string())
-            }
         };
 
         original_to_graph[bond_idx] = Some(bonds.len());
@@ -1525,6 +1526,7 @@ fn encode_layout_input(graph: &SmilesGraph) -> Vec<u8> {
             SmilesBondKind::Single => 1,
             SmilesBondKind::Double => 2,
             SmilesBondKind::Triple => 3,
+            SmilesBondKind::Quadruple => 4,
             SmilesBondKind::Aromatic => 1,
         });
     }
@@ -2473,6 +2475,7 @@ fn bond_func_name(
     match kind {
         BondKind::Double => "double",
         BondKind::Triple => "triple",
+        BondKind::Quadruple => "quadruple",
         BondKind::Single => "single",
         BondKind::Aromatic => "aromatic",
         BondKind::SingleOrDouble => "single-or-double",
@@ -3405,6 +3408,28 @@ mod tests {
         assert_eq!(bonds.len(), 8);
         assert!(atom_stereo.is_empty());
         assert!(double_bond_stereo.is_empty());
+    }
+
+    #[test]
+    fn smiles_quadruple_bond_is_preserved_for_layout_and_rendering() {
+        for mode in [
+            RenderMode::Full,
+            RenderMode::Abbreviate,
+            RenderMode::Skeletal,
+        ] {
+            let payload = smiles_layout_input("[Cr]$[Cr]", mode).unwrap();
+            let (atoms, bonds, atom_stereo, double_bond_stereo) = decode_layout_input(&payload);
+            assert_eq!(atoms, vec![24, 24]);
+            assert_eq!(bonds, vec![(0, 1, 4)]);
+            assert!(atom_stereo.is_empty());
+            assert!(double_bond_stereo.is_empty());
+
+            let coords = coordinate_payload(&[(0.0, 0.0), (1.0, 0.0)], 1);
+            let commands = smiles_to_commands_with_coords("[Cr]$[Cr]", &coords, mode).unwrap();
+            let mut rendered_bonds = Vec::new();
+            collect_bonds(&commands, &mut rendered_bonds);
+            assert_eq!(rendered_bonds, vec![("quadruple".to_string(), 1.0, None)]);
+        }
     }
 
     #[test]

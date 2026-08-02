@@ -123,6 +123,19 @@ mod tests {
         }
     }
 
+    fn bond_types(commands: &[Command], output: &mut Vec<String>) {
+        for command in commands {
+            match command {
+                Command::Fragment { links, .. } => {
+                    output.extend(links.iter().map(|link| link.bond_type.clone()));
+                }
+                Command::Bond { bond_type, .. } => output.push(bond_type.clone()),
+                Command::Branch { body } => bond_types(body, output),
+                Command::ComponentBreak => {}
+            }
+        }
+    }
+
     fn annotations(commands: &[Command], output: &mut Vec<String>) {
         for command in commands {
             match command {
@@ -145,6 +158,20 @@ mod tests {
         assert_eq!(u32::from_le_bytes(output[4..8].try_into().unwrap()), 6);
         assert_eq!(u32::from_le_bytes(output[8..12].try_into().unwrap()), 5);
         assert_eq!(output.len(), 12 + 6 * 8 + 5);
+    }
+
+    #[test]
+    fn native_coordgen_accepts_smiles_quadruple_bonds_in_every_mode() {
+        for mode in [
+            RenderMode::Full,
+            RenderMode::Abbreviate,
+            RenderMode::Skeletal,
+        ] {
+            let commands = smiles_to_commands("[Cr]$[Cr]", mode).unwrap();
+            let mut bonds = Vec::new();
+            bond_types(&commands, &mut bonds);
+            assert_eq!(bonds, vec!["quadruple"], "mode {mode:?}");
+        }
     }
 
     #[test]

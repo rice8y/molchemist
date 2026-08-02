@@ -41,6 +41,7 @@ fn typst_and_cli_outputs_match_exactly() {
         ("isotope-map", "[13CH3:7]C", RenderMode::Abbreviate),
         ("charged-carbon", "[CH2-]C", RenderMode::Skeletal),
         ("wildcard", "*", RenderMode::Skeletal),
+        ("quadruple", "[Cr]$[Cr]", RenderMode::Skeletal),
         (
             "multicomponent",
             "[Na+].[Cl-]",

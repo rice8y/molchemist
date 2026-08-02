@@ -126,7 +126,7 @@ bool molchemist::layout_coordinates(
         }
 
         const auto order = input[offset++];
-        if (atom1 >= atom_count || atom2 >= atom_count || order == 0 || order > 3)
+        if (atom1 >= atom_count || atom2 >= atom_count || order == 0 || order > 4)
         {
             delete molecule;
             return fail(error, "Layout payload contains an invalid bond");

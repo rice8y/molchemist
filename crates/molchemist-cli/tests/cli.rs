@@ -35,6 +35,28 @@ fn dumps_smiles_to_stdout_without_diagnostics() {
 }
 
 #[test]
+fn dumps_smiles_quadruple_bonds_in_every_mode() {
+    for mode in ["full", "abbreviate", "skeletal"] {
+        let output = molchemist()
+            .args(["dump", "--smiles", "[Cr]$[Cr]", "--mode", mode])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "quadruple bond failed in {mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("#let _molchemist-quadruple = build-link"));
+        assert!(stdout.contains("_molchemist-quadruple(absolute:"));
+        assert!(stdout.contains("fragment(\"Cr\", name: \"a0\")"));
+        assert!(stdout.contains("fragment(\"Cr\", name: \"a1\")"));
+    }
+}
+
+#[test]
 fn dumps_disconnected_smiles_as_separate_components() {
     let output = molchemist()
         .args(["dump", "--smiles", "[Na+].[Cl-]", "--mode", "abbreviate"])

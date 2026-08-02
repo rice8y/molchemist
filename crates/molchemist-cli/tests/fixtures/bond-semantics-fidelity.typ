@@ -1,4 +1,4 @@
-#import "../../../../package/lib.typ": render-mol
+#import "../../../../package/lib.typ": render-mol, render-smiles
 
 #set page(width: auto, height: auto, margin: 4mm)
 
@@ -43,4 +43,5 @@
   [Coordination →], render-mol(v3000(9)),
   [Coordination ←], render-mol(v3000(9, atom1: 2, atom2: 1)),
   [Hydrogen], render-mol(v3000(10)),
+  [Quadruple], render-smiles("[Cr]$[Cr]"),
 )
