@@ -95,7 +95,7 @@ const EXTENDED_BOND_DEFINITIONS: &str = r#"#import "@preview/cetz:0.5.2"
     (0, 0),
     (length, 0),
     stroke: args.at("stroke", default: ctx.config.single.stroke),
-    mark: (end: ">"),
+    mark: (end: ">", fill: black),
   )
 })
 
@@ -105,7 +105,7 @@ const EXTENDED_BOND_DEFINITIONS: &str = r#"#import "@preview/cetz:0.5.2"
     (0, 0),
     (length, 0),
     stroke: args.at("stroke", default: ctx.config.single.stroke),
-    mark: (start: ">"),
+    mark: (start: ">", fill: black),
   )
 })
 
@@ -286,17 +286,21 @@ fn format_atom_label(atom: &AtomLabel) -> String {
     let base = match atom.hydrogen_count {
         0 => format!("[{symbol}]"),
         1 => format!("[{symbol}H]"),
-        count => format!("[{symbol}#math.attach([H], b: [{count}])]"),
+        count => {
+            format!("[{symbol}#math.attach([H], b: [{count}], t: std.hide([{count}]))]")
+        }
     };
     let mut attachments = Vec::new();
 
     if let Some(isotope) = atom.isotope {
         attachments.push(format!("tl: [{isotope}]"));
+        attachments.push(format!("bl: std.hide([{isotope}])"));
     }
 
     let top_right = format!("{}{}", charge_text(atom.charge), radical_text(atom.radical));
     if !top_right.is_empty() {
         attachments.push(format!("tr: [{}]", escape_content(&top_right)));
+        attachments.push(format!("br: std.hide([{}])", escape_content(&top_right)));
     }
 
     let chemical_label = if attachments.is_empty() {
@@ -528,8 +532,8 @@ mod tests {
 
         assert!(output.contains(concat!(
             "fragment(math.equation(math.attach(math.attach(",
-            "[C#math.attach([H], b: [3])], ",
-            "tl: [13], tr: [+•]",
+            "[C#math.attach([H], b: [3], t: std.hide([3]))], ",
+            "tl: [13], bl: std.hide([13]), tr: [+•], br: std.hide([+•])",
             ") + [:7])), name: \"a0\")",
         )));
         assert!(!output.contains("br: [:7]"));
@@ -610,6 +614,8 @@ mod tests {
         assert!(output.contains("\"a2\": _molchemist-wavy("));
         assert!(output.contains("_molchemist-aromatic(absolute: 0deg"));
         assert!(output.contains("_molchemist-coordination-left(absolute: 90deg"));
+        assert!(output.contains("mark: (end: \">\", fill: black)"));
+        assert!(output.contains("mark: (start: \">\", fill: black)"));
     }
 
     #[test]

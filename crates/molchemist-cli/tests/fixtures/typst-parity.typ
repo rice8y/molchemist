@@ -66,5 +66,6 @@
   wildcard: dump-smiles("*", "skeletal"),
   quadruple: dump-smiles("[Cr]$[Cr]", "skeletal"),
   multicomponent: dump-smiles("[Na+].[Cl-]", "abbreviate"),
+  component-baselines: dump-smiles("[H+].C.[Cl-]", "skeletal"),
   complex: dump-smiles("CC[C@@H]([C@@H]1[C@H](C[C@@](O1)(CC)[C@H]2CC[C@@]([C@@H](O2)C)(CC)O)C)C(=O)[C@@H](C)[C@H]([C@H](C)CCC3=C(C=C(C(=C3C(=O)O)O)C)Br)O", "abbreviate"),
 )) <parity>

@@ -98,7 +98,7 @@
     (0, 0),
     (length, 0),
     stroke: args.at("stroke", default: ctx.config.single.stroke),
-    mark: (end: ">"),
+    mark: (end: ">", fill: black),
   )
 })
 
@@ -108,7 +108,7 @@
     (0, 0),
     (length, 0),
     stroke: args.at("stroke", default: ctx.config.single.stroke),
-    mark: (start: ">"),
+    mark: (start: ">", fill: black),
   )
 })
 
@@ -160,7 +160,8 @@
   if hydrogen-count == 1 {
     base += [H]
   } else if hydrogen-count > 1 {
-    base += math.attach([H], b: [#hydrogen-count])
+    let count-label = [#hydrogen-count]
+    base += math.attach([H], b: count-label, t: std.hide(count-label))
   }
 
   let top-right = _atom-charge-label(atom.at("charge", default: 0))
@@ -171,7 +172,9 @@
   let chemical-label = math.attach(
     base,
     tl: if isotope == none { none } else { [#isotope] },
+    bl: if isotope == none { none } else { std.hide([#isotope]) },
     tr: if top-right == [] { none } else { top-right },
+    br: if top-right == [] { none } else { std.hide(top-right) },
   )
   let label = if atom-map == none {
     chemical-label

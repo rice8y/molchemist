@@ -52,7 +52,9 @@ fn dumps_atom_classes_as_inline_label_suffixes() {
         );
         if mode != "full" {
             assert!(
-                stdout.contains("math.attach(math.attach([C#math.attach([H], b: [3])]) + [:1])"),
+                stdout.contains(
+                    "math.attach(math.attach([C#math.attach([H], b: [3], t: std.hide([3]))]) + [:1])"
+                ),
                 "hydrogen count or atom class order changed in {mode}"
             );
         }
@@ -91,9 +93,24 @@ fn dumps_disconnected_smiles_as_separate_components() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("fragment(\"Na^+\", name: \"a0\")"));
+    assert!(stdout.contains("math.attach([Na], tr: [+], br: std.hide([+]))"));
     assert!(stdout.contains("operator(none, margin: base-sep * 0.5)"));
-    assert!(stdout.contains("fragment(\"Cl^-\", name: \"a1\")"));
+    assert!(stdout.contains("math.attach([Cl], tr: [−], br: std.hide([−]))"));
+}
+
+#[test]
+fn dumps_component_labels_with_balanced_attachments() {
+    let output = molchemist()
+        .args(["dump", "--smiles", "[H+].C.[Cl-]", "--mode", "skeletal"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("math.attach([H], tr: [+], br: std.hide([+]))"));
+    assert!(stdout.contains("[C#math.attach([H], b: [4], t: std.hide([4]))]"));
+    assert!(stdout.contains("math.attach([Cl], tr: [−], br: std.hide([−]))"));
 }
 
 #[test]
@@ -140,6 +157,8 @@ fn dumps_extended_sdf_bond_semantics_without_collapsing_to_single() {
     ] {
         assert!(stdout.contains(function), "missing {function}");
     }
+    assert!(stdout.contains("mark: (end: \">\", fill: black)"));
+    assert!(stdout.contains("mark: (start: \">\", fill: black)"));
 }
 
 #[test]
@@ -358,8 +377,8 @@ fn auto_detects_and_dumps_v3000_input() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("fragment(\"N^+\""));
-    assert!(stdout.contains("fragment(\"O^-\""));
+    assert!(stdout.contains("math.attach([N], tr: [+], br: std.hide([+]))"));
+    assert!(stdout.contains("math.attach([O], tr: [−], br: std.hide([−]))"));
 }
 
 #[test]
