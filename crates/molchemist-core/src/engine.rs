@@ -2068,14 +2068,15 @@ fn has_visible_atom_metadata(atom: &RenderAtom) -> bool {
 
 fn render_label(atom: &RenderAtom, hydrogen_count: u8) -> RenderLabel {
     let text = atom_label(&atom.element, hydrogen_count, atom.charge);
-    let structured = has_visible_atom_metadata(atom).then(|| AtomLabel {
-        symbol: atom.element.clone(),
-        hydrogen_count,
-        charge: atom.charge,
-        isotope: atom.isotope,
-        radical: atom.radical,
-        atom_map: atom.atom_map,
-    });
+    let structured = (hydrogen_count > 1 || atom.charge != 0 || has_visible_atom_metadata(atom))
+        .then(|| AtomLabel {
+            symbol: atom.element.clone(),
+            hydrogen_count,
+            charge: atom.charge,
+            isotope: atom.isotope,
+            radical: atom.radical,
+            atom_map: atom.atom_map,
+        });
 
     RenderLabel {
         text,
@@ -3210,20 +3211,45 @@ mod tests {
 
     #[test]
     fn disconnected_smiles_keeps_isolated_hydrogen_and_carbon_visible() {
-        let coords = coordinate_payload(&[(0.0, 0.0), (2.0, 0.0)], 0);
+        let coords = coordinate_payload(&[(0.0, 0.0), (2.0, 0.0), (4.0, 0.0)], 0);
         let commands =
-            smiles_to_commands_with_coords("[H+].C", &coords, RenderMode::Skeletal).unwrap();
+            smiles_to_commands_with_coords("[H+].C.[Cl-]", &coords, RenderMode::Skeletal).unwrap();
 
         assert!(matches!(
             commands.as_slice(),
             [
-                Command::Fragment { element: hydrogen, name: hydrogen_name, .. },
+                Command::Fragment {
+                    element: hydrogen,
+                    name: hydrogen_name,
+                    atom: Some(hydrogen_label),
+                    ..
+                },
                 Command::ComponentBreak,
-                Command::Fragment { element: carbon, name: carbon_name, .. },
+                Command::Fragment {
+                    element: carbon,
+                    name: carbon_name,
+                    atom: Some(carbon_label),
+                    ..
+                },
+                Command::ComponentBreak,
+                Command::Fragment {
+                    element: chlorine,
+                    name: chlorine_name,
+                    atom: Some(chlorine_label),
+                    ..
+                },
             ] if hydrogen == "H^+"
                 && hydrogen_name == "a0"
+                && hydrogen_label.symbol == "H"
+                && hydrogen_label.charge == 1
                 && carbon == "CH_4"
                 && carbon_name == "a1"
+                && carbon_label.symbol == "C"
+                && carbon_label.hydrogen_count == 4
+                && chlorine == "Cl^-"
+                && chlorine_name == "a2"
+                && chlorine_label.symbol == "Cl"
+                && chlorine_label.charge == -1
         ));
     }
 
@@ -3282,7 +3308,10 @@ mod tests {
         let (label, atom) = first_fragment(&commands);
 
         assert_eq!(label, "CH_2^-");
-        assert!(atom.is_none());
+        let atom = atom.unwrap();
+        assert_eq!(atom.symbol, "C");
+        assert_eq!(atom.hydrogen_count, 2);
+        assert_eq!(atom.charge, -1);
     }
 
     #[test]

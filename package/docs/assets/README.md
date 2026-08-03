@@ -2,6 +2,10 @@
 
 This directory contains small molecule structure files used by the `molchemist` manual.
 
+## Synthetic Fidelity Fixtures
+
+The files `sdf-version-records.sdf`, `bond-semantics.sdf`, `stereochemistry.sdf`, and `collapsed-layout.sdf` are small synthetic structures authored for this repository. They exercise record selection, V2000/V3000 parsing, extended bond types, stereochemical metadata, and automatic layout recovery without introducing additional third-party data.
+
 ## PubChem CID 241
 
 - File: `Structure2D_COMPOUND_CID_241.sdf`

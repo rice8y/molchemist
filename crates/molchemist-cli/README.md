@@ -40,6 +40,24 @@ Convert a SMILES string:
 molchemist dump --smiles 'CC(=O)Oc1ccccc1C(=O)O' --mode skeletal
 ```
 
+For example:
+
+```console
+$ molchemist dump --smiles 'CC(=O)O' --mode skeletal
+#let base-sep = 3em
+#skeletize({
+  hook("a0")
+  single(absolute: 29.79036703670196deg, atom-sep: base-sep * 1, name: "b0")
+  hook("a1")
+  branch({
+    double(absolute: 89.79373607661383deg, atom-sep: base-sep * 1.000062954206203, name: "b1")
+    fragment("O", name: "a2")
+  })
+  single(absolute: −30.20116835518715deg, atom-sep: base-sep * 0.9999817671902098, name: "b2")
+  fragment("OH", name: "a3")
+})
+```
+
 SMILES input is parsed strictly. Malformed branch, dot, bond, bracket-property, charge, isotope, atom-class, directional-bond, and aromatic notation returns an error instead of being normalized silently.
 
 Input can also come from standard input or `--text`:
