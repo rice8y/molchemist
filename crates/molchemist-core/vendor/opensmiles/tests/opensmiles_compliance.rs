@@ -14,23 +14,11 @@ use opensmiles::{parse, AtomSymbol, BondType, ParserError};
 fn parse_aromatic_selenium_bracket() {
     // [se] is aromatic selenium per OpenSMILES
     // c1cc[se]cc1 is a 6-membered ring with Se → 5×1 + 2 = 7 pi electrons (not 4n+2)
-    // Without huckel-validation: parses successfully (syntax is valid)
-    // With huckel-validation: rejected as chemically invalid
     let result = parse("c1cc[se]cc1");
-    #[cfg(not(feature = "huckel-validation"))]
-    {
-        let mol = result.expect("Failed to parse c1cc[se]cc1");
-        assert_eq!(mol.nodes().len(), 6);
-        assert_eq!(*mol.nodes()[3].atom().element(), AtomSymbol::Se);
-        assert!(mol.nodes()[3].aromatic());
-    }
-    #[cfg(feature = "huckel-validation")]
-    {
-        assert!(
-            result.is_err(),
-            "c1cc[se]cc1 should fail Hückel validation (7 pi electrons)"
-        );
-    }
+    assert!(
+        result.is_err(),
+        "c1cc[se]cc1 should fail Hückel validation (7 pi electrons)"
+    );
 }
 
 #[test]
@@ -44,11 +32,8 @@ fn parse_aromatic_arsenic_bracket() {
 
 #[test]
 fn parse_aromatic_tellurium_bracket() {
-    // [te] is aromatic tellurium (Te has can_be_aromatic = true)
-    let mol = parse("[te]").expect("Failed to parse [te]");
-    assert_eq!(mol.nodes().len(), 1);
-    assert_eq!(*mol.nodes()[0].atom().element(), AtomSymbol::Te);
-    assert!(mol.nodes()[0].aromatic());
+    // Aromatic atoms are only valid as members of aromatic rings.
+    assert!(parse("[te]").is_err());
 }
 
 #[test]

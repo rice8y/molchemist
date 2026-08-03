@@ -959,6 +959,8 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
 
 fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
     let molecule = parse_smiles(smiles).map_err(|e| e.to_string())?;
+    let aromatic_double_bonds = crate::ast::aromaticity::aromatic_kekule_bonds(&molecule)
+        .map_err(|error| error.to_string())?;
     let mut incident_bonds = vec![Vec::<(usize, usize)>::new(); molecule.nodes().len()];
     let mut original_to_graph = vec![None; molecule.bonds().len()];
     let mut bonds = Vec::new();
@@ -980,7 +982,13 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
             SmilesBondType::Double => SmilesBondKind::Double,
             SmilesBondType::Triple => SmilesBondKind::Triple,
             SmilesBondType::Quadruple => SmilesBondKind::Quadruple,
-            SmilesBondType::Aromatic => SmilesBondKind::Aromatic,
+            SmilesBondType::Aromatic => {
+                if aromatic_double_bonds.contains(&bond_idx) {
+                    SmilesBondKind::Double
+                } else {
+                    SmilesBondKind::Single
+                }
+            }
             SmilesBondType::Disconnected => continue,
         };
 
@@ -1041,8 +1049,6 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
         .collect::<Vec<_>>();
 
     let double_bond_stereo = build_double_bond_stereo_specs(&molecule, &original_to_graph);
-
-    kekulize_aromatic_bonds(atoms.len(), &mut bonds);
 
     Ok(SmilesGraph {
         atoms,
@@ -1390,111 +1396,6 @@ fn directional_marker_for_center(
         }
         _ => None,
     })
-}
-
-fn kekulize_aromatic_bonds(atom_count: usize, bonds: &mut [SmilesBond]) {
-    let mut aromatic_adj = vec![Vec::new(); atom_count];
-    for (bond_idx, bond) in bonds.iter().enumerate() {
-        if bond.kind == SmilesBondKind::Aromatic {
-            aromatic_adj[bond.atom1].push(bond_idx);
-            aromatic_adj[bond.atom2].push(bond_idx);
-        }
-    }
-
-    let mut visited = vec![false; atom_count];
-    for start in 0..atom_count {
-        if visited[start] || aromatic_adj[start].is_empty() {
-            continue;
-        }
-
-        let mut queue = VecDeque::from([start]);
-        let mut component_atoms = Vec::new();
-        let mut component_edges = HashSet::new();
-        visited[start] = true;
-
-        while let Some(atom) = queue.pop_front() {
-            component_atoms.push(atom);
-            for &bond_idx in &aromatic_adj[atom] {
-                component_edges.insert(bond_idx);
-                let bond = &bonds[bond_idx];
-                let other = if bond.atom1 == atom {
-                    bond.atom2
-                } else {
-                    bond.atom1
-                };
-                if !visited[other] {
-                    visited[other] = true;
-                    queue.push_back(other);
-                }
-            }
-        }
-
-        let mut edge_indices = component_edges.into_iter().collect::<Vec<_>>();
-        edge_indices.sort_unstable_by_key(|&bond_idx| {
-            let bond = &bonds[bond_idx];
-            (
-                usize::MAX - (aromatic_adj[bond.atom1].len() + aromatic_adj[bond.atom2].len()),
-                bond_idx,
-            )
-        });
-
-        let mut used_atoms = vec![false; atom_count];
-        let mut current = Vec::new();
-        let mut best = Vec::new();
-        search_max_matching(
-            &edge_indices,
-            bonds,
-            0,
-            &mut used_atoms,
-            &mut current,
-            &mut best,
-        );
-
-        let best: HashSet<_> = best.into_iter().collect();
-        for bond_idx in edge_indices {
-            bonds[bond_idx].kind = if best.contains(&bond_idx) {
-                SmilesBondKind::Double
-            } else {
-                SmilesBondKind::Single
-            };
-        }
-    }
-}
-
-fn search_max_matching(
-    edge_indices: &[usize],
-    bonds: &[SmilesBond],
-    pos: usize,
-    used_atoms: &mut [bool],
-    current: &mut Vec<usize>,
-    best: &mut Vec<usize>,
-) {
-    if pos == edge_indices.len() {
-        if current.len() > best.len() {
-            *best = current.clone();
-        }
-        return;
-    }
-
-    let remaining = edge_indices.len() - pos;
-    if current.len() + remaining <= best.len() {
-        return;
-    }
-
-    let bond_idx = edge_indices[pos];
-    let bond = &bonds[bond_idx];
-
-    if !used_atoms[bond.atom1] && !used_atoms[bond.atom2] {
-        used_atoms[bond.atom1] = true;
-        used_atoms[bond.atom2] = true;
-        current.push(bond_idx);
-        search_max_matching(edge_indices, bonds, pos + 1, used_atoms, current, best);
-        current.pop();
-        used_atoms[bond.atom1] = false;
-        used_atoms[bond.atom2] = false;
-    }
-
-    search_max_matching(edge_indices, bonds, pos + 1, used_atoms, current, best);
 }
 
 fn encode_layout_input(graph: &SmilesGraph) -> Vec<u8> {
@@ -3449,6 +3350,44 @@ mod tests {
     }
 
     #[test]
+    fn aromatic_heteroatoms_do_not_receive_kekule_double_bonds() {
+        for smiles in ["o1cccc1", "c1occc1", "[nH]1cccc1", "c1cc[nH]c1"] {
+            let graph = parse_smiles_graph(smiles).unwrap();
+            let hetero = graph
+                .atoms
+                .iter()
+                .position(|atom| atom.element == "O" || atom.element == "N")
+                .unwrap();
+            assert!(
+                graph.bonds.iter().all(|bond| {
+                    (bond.atom1 != hetero && bond.atom2 != hetero)
+                        || bond.kind == SmilesBondKind::Single
+                }),
+                "{smiles}"
+            );
+            assert_eq!(
+                graph
+                    .bonds
+                    .iter()
+                    .filter(|bond| bond.kind == SmilesBondKind::Double)
+                    .count(),
+                2,
+                "{smiles}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_aromatic_and_explicit_kekule_bonds_are_supported() {
+        let graph = parse_smiles_graph("OCCc1c(C)[n+](=cs1)Cc2cnc(C)nc(N)2").unwrap();
+        assert_eq!(graph.atoms.len(), 18);
+        assert!(graph
+            .bonds
+            .iter()
+            .any(|bond| bond.atom1 == 6 && bond.atom2 == 7 && bond.kind == SmilesBondKind::Double));
+    }
+
+    #[test]
     fn branch_leading_bond_type_does_not_leak_into_smiles_layout() {
         let payload = smiles_to_layout_input(b"C(=CC=O)C=C(C(=O)O)N").unwrap();
         let (_, bonds, _, _) = decode_layout_input(&payload);
@@ -3491,7 +3430,7 @@ mod tests {
         }
         coords.extend_from_slice(&[0]);
 
-        let ast_bytes = smiles_to_ast(b"[n+]C", &coords, b"abbreviate").unwrap();
+        let ast_bytes = smiles_to_ast(b"[N+]C", &coords, b"abbreviate").unwrap();
         let ast: Value = ciborium::from_reader(ast_bytes.as_slice()).unwrap();
         let ast = ast.as_array().unwrap();
         let mut labels = Vec::new();

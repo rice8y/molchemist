@@ -1,6 +1,7 @@
 use super::graph::Ring;
 use super::molecule::Molecule;
-use crate::{MoleculeError, NodeIndex};
+use crate::{BondType, MoleculeError, NodeIndex};
+use std::collections::{HashSet, VecDeque};
 
 /// Result of aromaticity validation for a single ring.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,7 +35,7 @@ fn count_sigma_bonds(molecule: &Molecule, node_idx: NodeIndex) -> u8 {
 /// Calculates the contribution based on valence electrons, sigma bonds, and charge.
 ///
 /// Returns `None` if the contribution cannot be determined (e.g., Wildcard).
-fn pi_electron_contribution(molecule: &Molecule, node_idx: NodeIndex) -> Option<u8> {
+pub(crate) fn pi_electron_contribution(molecule: &Molecule, node_idx: NodeIndex) -> Option<u8> {
     let node = &molecule.nodes()[node_idx as usize];
     let element = node.atom().element();
     let charge = node.atom().charge();
@@ -43,6 +44,17 @@ fn pi_electron_contribution(molecule: &Molecule, node_idx: NodeIndex) -> Option<
     // Wildcard atoms have valence_electrons = 0, cannot be determined
     if valence_electrons == 0 {
         return None;
+    }
+
+    // An aromatic carbon contributes one electron in its neutral state even
+    // when a mixed aromatic/Kekulé spelling makes one adjacent double bond
+    // explicit and therefore suppresses its implicit hydrogen.
+    if element.atomic_number() == 6 {
+        return Some(match charge.cmp(&0) {
+            std::cmp::Ordering::Less => 2,
+            std::cmp::Ordering::Equal => 1,
+            std::cmp::Ordering::Greater => 0,
+        });
     }
 
     let sigma_bonds = count_sigma_bonds(molecule, node_idx);
@@ -137,6 +149,52 @@ pub fn validate_aromaticity(molecule: &Molecule) -> Vec<AromaticityCheck> {
 /// Returns `Ok(())` if all rings are valid or undeterminable.
 /// Returns `Err(MoleculeError::HuckelViolation)` on the first invalid ring.
 pub fn require_valid_aromaticity(molecule: &Molecule) -> Result<(), MoleculeError> {
+    aromatic_kekule_bonds(molecule)?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AromaticDoubleRole {
+    Required,
+    Forbidden,
+    Flexible,
+}
+
+/// Returns the aromatic bond indices that must be rendered as double bonds in
+/// a valence-compatible Kekule assignment.
+pub(crate) fn aromatic_kekule_bonds(molecule: &Molecule) -> Result<HashSet<usize>, MoleculeError> {
+    let atom_count = molecule.nodes().len();
+    let mut adjacency = vec![Vec::<(NodeIndex, usize)>::new(); atom_count];
+
+    for (bond_idx, bond) in molecule.bonds().iter().enumerate() {
+        if bond.kind() != BondType::Aromatic {
+            continue;
+        }
+        if !molecule.nodes()[bond.source() as usize].aromatic()
+            || !molecule.nodes()[bond.target() as usize].aromatic()
+        {
+            return Err(MoleculeError::InvalidAromaticBond {
+                atom1: bond.source(),
+                atom2: bond.target(),
+            });
+        }
+        adjacency[bond.source() as usize].push((bond.target(), bond_idx));
+        adjacency[bond.target() as usize].push((bond.source(), bond_idx));
+    }
+
+    let rings = molecule.aromatic_rings();
+    let ring_atoms = rings
+        .iter()
+        .flat_map(|ring| ring.nodes.iter().copied())
+        .collect::<HashSet<_>>();
+    for (atom_idx, node) in molecule.nodes().iter().enumerate() {
+        if node.aromatic() && !ring_atoms.contains(&(atom_idx as NodeIndex)) {
+            return Err(MoleculeError::AromaticAtomOutsideRing {
+                atom: atom_idx as NodeIndex,
+            });
+        }
+    }
+
     for check in validate_aromaticity(molecule) {
         if !check.is_valid {
             return Err(MoleculeError::HuckelViolation {
@@ -145,7 +203,124 @@ pub fn require_valid_aromaticity(molecule: &Molecule) -> Result<(), MoleculeErro
             });
         }
     }
-    Ok(())
+
+    let roles = (0..atom_count)
+        .map(|atom_idx| {
+            if !molecule.nodes()[atom_idx].aromatic() {
+                return AromaticDoubleRole::Forbidden;
+            }
+            match pi_electron_contribution(molecule, atom_idx as NodeIndex) {
+                Some(1) => AromaticDoubleRole::Required,
+                Some(_) => AromaticDoubleRole::Forbidden,
+                None => AromaticDoubleRole::Flexible,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut used_atoms = vec![false; atom_count];
+    for bond in molecule.bonds() {
+        if bond.kind() != BondType::Double
+            || !molecule.nodes()[bond.source() as usize].aromatic()
+            || !molecule.nodes()[bond.target() as usize].aromatic()
+        {
+            continue;
+        }
+
+        let source = bond.source() as usize;
+        let target = bond.target() as usize;
+        if roles[source] == AromaticDoubleRole::Forbidden
+            || roles[target] == AromaticDoubleRole::Forbidden
+            || used_atoms[source]
+            || used_atoms[target]
+        {
+            return Err(MoleculeError::AromaticKekulizationFailed {
+                atoms: vec![bond.source(), bond.target()],
+            });
+        }
+        used_atoms[source] = true;
+        used_atoms[target] = true;
+    }
+
+    let mut visited = vec![false; atom_count];
+    let mut selected_bonds = HashSet::new();
+    for start in 0..atom_count {
+        if visited[start] || adjacency[start].is_empty() {
+            continue;
+        }
+        let mut queue = VecDeque::from([start as NodeIndex]);
+        let mut component = Vec::new();
+        visited[start] = true;
+        while let Some(atom) = queue.pop_front() {
+            component.push(atom);
+            for &(neighbor, _) in &adjacency[atom as usize] {
+                if !visited[neighbor as usize] {
+                    visited[neighbor as usize] = true;
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        let mut component_bonds = Vec::new();
+        if !match_required_aromatic_atoms(
+            &component,
+            &adjacency,
+            &roles,
+            &mut used_atoms,
+            &mut component_bonds,
+        ) {
+            return Err(MoleculeError::AromaticKekulizationFailed { atoms: component });
+        }
+        selected_bonds.extend(component_bonds);
+    }
+
+    let unmatched = (0..atom_count)
+        .filter(|&atom| roles[atom] == AromaticDoubleRole::Required && !used_atoms[atom])
+        .map(|atom| atom as NodeIndex)
+        .collect::<Vec<_>>();
+    if !unmatched.is_empty() {
+        return Err(MoleculeError::AromaticKekulizationFailed { atoms: unmatched });
+    }
+
+    Ok(selected_bonds)
+}
+
+fn match_required_aromatic_atoms(
+    component: &[NodeIndex],
+    adjacency: &[Vec<(NodeIndex, usize)>],
+    roles: &[AromaticDoubleRole],
+    used_atoms: &mut [bool],
+    selected_bonds: &mut Vec<usize>,
+) -> bool {
+    let Some(atom) = component.iter().copied().find(|atom| {
+        roles[*atom as usize] == AromaticDoubleRole::Required && !used_atoms[*atom as usize]
+    }) else {
+        return true;
+    };
+
+    let mut choices = adjacency[atom as usize].clone();
+    choices.sort_unstable_by_key(|(neighbor, bond_idx)| {
+        (
+            roles[*neighbor as usize] != AromaticDoubleRole::Required,
+            *bond_idx,
+        )
+    });
+    for (neighbor, bond_idx) in choices {
+        if used_atoms[neighbor as usize]
+            || roles[neighbor as usize] == AromaticDoubleRole::Forbidden
+        {
+            continue;
+        }
+        used_atoms[atom as usize] = true;
+        used_atoms[neighbor as usize] = true;
+        selected_bonds.push(bond_idx);
+        if match_required_aromatic_atoms(component, adjacency, roles, used_atoms, selected_bonds) {
+            return true;
+        }
+        selected_bonds.pop();
+        used_atoms[atom as usize] = false;
+        used_atoms[neighbor as usize] = false;
+    }
+    false
 }
 
 #[cfg(test)]

@@ -22,6 +22,15 @@ pub enum MoleculeError {
         ring: Vec<NodeIndex>,
         pi_electrons: u8,
     },
+
+    #[error("aromatic bond between non-aromatic atoms {atom1} and {atom2}")]
+    InvalidAromaticBond { atom1: NodeIndex, atom2: NodeIndex },
+
+    #[error("aromatic atom {atom} is not part of an aromatic ring")]
+    AromaticAtomOutsideRing { atom: NodeIndex },
+
+    #[error("aromatic component {atoms:?} has no valence-compatible Kekule assignment")]
+    AromaticKekulizationFailed { atoms: Vec<NodeIndex> },
 }
 
 #[cfg(test)]

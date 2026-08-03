@@ -222,7 +222,7 @@ mod tests {
         let mut stereo = Vec::new();
         stereo_bonds(&commands, &mut stereo);
 
-        assert!(stereo.len() >= 1);
+        assert!(!stereo.is_empty());
         assert!(commands.iter().any(|command| matches!(
             command,
             Command::Fragment { element, name, .. } if element == "H" && name == "a4"

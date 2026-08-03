@@ -15,7 +15,6 @@ links = "molchemist_coordgen"
 
 [features]
 default = []
-huckel-validation = []
 native-layout = []
 
 [dependencies]

@@ -432,16 +432,24 @@ fn writes_a_standalone_document_to_a_file() {
 
 #[test]
 fn rejects_invalid_smiles_without_polluting_stdout() {
-    let output = molchemist()
-        .args(["dump", "--smiles", "C("])
-        .output()
-        .unwrap();
+    for smiles in ["C(", ""] {
+        let output = molchemist()
+            .args(["dump", "--smiles", smiles])
+            .output()
+            .unwrap();
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8(output.stderr)
-        .unwrap()
-        .starts_with("error: failed to convert SMILES input:"));
+        assert!(!output.status.success(), "{smiles:?}");
+        assert!(output.stdout.is_empty(), "{smiles:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        if smiles.is_empty() {
+            assert_eq!(stderr, "error: SMILES input is empty\n");
+        } else {
+            assert!(
+                stderr.starts_with("error: failed to convert SMILES input:"),
+                "{smiles:?}"
+            );
+        }
+    }
 }
 
 #[test]

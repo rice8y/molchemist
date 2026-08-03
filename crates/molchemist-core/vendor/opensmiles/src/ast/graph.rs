@@ -1,4 +1,3 @@
-use super::bond::BondType;
 use super::molecule::Molecule;
 use crate::NodeIndex;
 use std::collections::{HashSet, VecDeque};
@@ -18,7 +17,8 @@ impl Ring {
 /// Finds all aromatic rings in a molecule.
 ///
 /// Uses the shortest-cycle-per-edge approach:
-/// 1. Build a subgraph of only aromatic nodes connected by aromatic bonds
+/// 1. Build a subgraph of aromatic nodes, including explicit single or double
+///    bonds used by mixed aromatic/Kekulé notation
 /// 2. For each edge, find the shortest cycle containing it (by removing the edge
 ///    and finding the shortest path between its endpoints)
 /// 3. Deduplicate rings by their node sets
@@ -42,7 +42,7 @@ pub fn find_aromatic_rings(molecule: &Molecule) -> Vec<Ring> {
     for bond in molecule.bonds() {
         let s = bond.source() as usize;
         let t = bond.target() as usize;
-        if is_aromatic[s] && is_aromatic[t] && bond.kind() == BondType::Aromatic {
+        if is_aromatic[s] && is_aromatic[t] {
             adj[s].push(bond.target());
             adj[t].push(bond.source());
             let edge = if bond.source() < bond.target() {
@@ -208,6 +208,14 @@ mod tests {
     #[test]
     fn pyrrole_has_one_ring_of_size_5() {
         let mol = parse("c1cc[nH]c1").unwrap();
+        let rings = mol.aromatic_rings();
+        assert_eq!(rings.len(), 1);
+        assert_eq!(rings[0].size(), 5);
+    }
+
+    #[test]
+    fn mixed_aromatic_and_explicit_double_bonds_form_a_ring() {
+        let mol = parse("c1c(C)[n+](=cs1)C").unwrap();
         let rings = mol.aromatic_rings();
         assert_eq!(rings.len(), 1);
         assert_eq!(rings[0].size(), 5);
