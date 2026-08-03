@@ -277,6 +277,24 @@ molchemist dump molecule.sdf > molecule.typ
 molchemist dump --smiles 'CC(=O)O' --mode skeletal --standalone --output acetic-acid.typ
 ```
 
+For example:
+
+```console
+$ molchemist dump --smiles 'CC(=O)O' --mode skeletal
+#let base-sep = 3em
+#skeletize({
+  hook("a0")
+  single(absolute: 29.79036703670196deg, atom-sep: base-sep * 1, name: "b0")
+  hook("a1")
+  branch({
+    double(absolute: 89.79373607661383deg, atom-sep: base-sep * 1.000062954206203, name: "b1")
+    fragment("O", name: "a2")
+  })
+  single(absolute: −30.20116835518715deg, atom-sep: base-sep * 0.9999817671902098, name: "b2")
+  fragment("OH", name: "a3")
+})
+```
+
 The CLI embeds the same WASM conversion modules as this Typst package, so its default source matches `dump: true`. Use `molchemist dump --help` for format, record-selection, indentation, and standalone-document options.
 
 ## Known Limitations
