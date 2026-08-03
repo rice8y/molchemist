@@ -126,6 +126,7 @@ Molfile/SDF input is detected as V2000 or V3000 for each selected record. For a 
 #grid(
   columns: 2,
   gutter: 2em,
+  align: top,
   align(center)[
     *V2000 · record 1*
     #v(0.6em)
@@ -188,6 +189,7 @@ Extended OpenSMILES chirality classes are depicted natively when their topology 
 #grid(
   columns: 2,
   gutter: 2em,
+  align: top,
   align(center)[
     *D-alanine · (R)*
     #v(0.6em)

@@ -7,6 +7,10 @@
 #let docs-cid-241-sdf = read("assets/Structure2D_COMPOUND_CID_241.sdf")
 #let docs-cid-93406-sdf = read("assets/Structure2D_COMPOUND_CID_93406.sdf")
 #let docs-sid-93298-sdf = read("assets/DepositedStructure_SUBSTANCE_SID_93298_Version_3.sdf")
+#let docs-sdf-version-records = read("assets/sdf-version-records.sdf")
+#let docs-bond-semantics-sdf = read("assets/bond-semantics.sdf")
+#let docs-stereochemistry-sdf = read("assets/stereochemistry.sdf")
+#let docs-collapsed-layout-sdf = read("assets/collapsed-layout.sdf")
 
 #let styled-theme = create-theme(
   fonts: (
@@ -75,6 +79,10 @@
       docs-cid-241-sdf: docs-cid-241-sdf,
       docs-cid-93406-sdf: docs-cid-93406-sdf,
       docs-sid-93298-sdf: docs-sid-93298-sdf,
+      docs-sdf-version-records: docs-sdf-version-records,
+      docs-bond-semantics-sdf: docs-bond-semantics-sdf,
+      docs-stereochemistry-sdf: docs-stereochemistry-sdf,
+      docs-collapsed-layout-sdf: docs-collapsed-layout-sdf,
     ),
     imports: (
       molchemist: "*",
@@ -177,7 +185,7 @@ The SDF examples in this manual use real PubChem records included in the reposit
   #grid(
     columns: 3,
     gutter: 7mm,
-    align: horizon + center,
+    align: center + horizon,
     render-mol(benzene, skeletal: true, config: (atom-sep: 1.55em)),
     render-mol(fused, skeletal: true, config: (atom-sep: 1.55em)),
     render-mol(deposited, skeletal: true, config: (atom-sep: 1.55em)),
@@ -187,12 +195,329 @@ The SDF examples in this manual use real PubChem records included in the reposit
   #grid(
     columns: 3,
     gutter: 7mm,
-    align: horizon + center,
+    align: center + horizon,
     render-mol(docs-cid-241-sdf, skeletal: true, config: (atom-sep: 1.55em)),
     render-mol(docs-cid-93406-sdf, skeletal: true, config: (atom-sep: 1.55em)),
     render-mol(docs-sid-93298-sdf, skeletal: true, config: (atom-sep: 1.55em)),
   )
 ]
+
+= Input and Semantic Fidelity
+
+The examples in this chapter focus on information that is easy to lose when a molecular file is reduced to a generic graph. Each example shows both the Typst source and the resulting drawing so that input selection, metadata, bond meaning, and stereochemistry can be checked independently.
+
+== SDF Versions and Record Selection
+
+@cmd:render-mol[-] detects V2000 and V3000 independently for every selected SDF record. The #arg[record] option is one-based and defaults to `1`; it does not depend on the format of preceding records. This makes mixed-version SDF collections usable without preprocessing.
+
+#example[
+  ```typ
+  #let records = read("structures.sdf")
+
+  #grid(
+    columns: 2,
+    gutter: 10mm,
+    align: center + top,
+    [
+      *V2000 · record 1*
+      #v(2mm)
+      #render-mol(records, record: 1)
+    ],
+    [
+      *V3000 · record 2*
+      #v(2mm)
+      #render-mol(records, record: 2, abbreviate: true)
+    ],
+  )
+  ```
+][
+  #grid(
+    columns: 2,
+    gutter: 10mm,
+    align: center + top,
+    [
+      *V2000 · record 1*
+      #v(2mm)
+      #render-mol(docs-sdf-version-records, record: 1)
+    ],
+    [
+      *V3000 · record 2*
+      #v(2mm)
+      #render-mol(docs-sdf-version-records, record: 2, abbreviate: true)
+    ],
+  )
+]
+
+The second synthetic record also demonstrates V3000 charge, isotope, radical, and atom-map fields. Bond configuration is covered separately in the stereochemistry examples below. An out-of-range record number, an empty structure, malformed CTAB data, or non-finite coordinates raises an explicit error instead of silently drawing the wrong record.
+
+== Coordinate Preservation and Layout Recovery
+
+Usable source coordinates are preserved, including their relative orientation. Automatic layout is requested only when the XY geometry is unusable—for example, when every bonded atom is collapsed onto one point or a nominally 3D record has no meaningful XY projection. The recovered drawing still uses the source bond orders, wedge direction, atom metadata, and record ordering.
+
+#example[
+  ```typ
+  #let supplied = read("benzene-2d.sdf")
+  #let collapsed = read("collapsed-layout.sdf")
+
+  #grid(
+    columns: 2,
+    gutter: 12mm,
+    align: center + top,
+    [
+      *Preserved 2D coordinates*
+      #v(2mm)
+      #render-mol(supplied, skeletal: true)
+    ],
+    [
+      *Recovered collapsed coordinates*
+      #v(2mm)
+      #render-mol(collapsed, skeletal: true)
+    ],
+  )
+  ```
+][
+  #grid(
+    columns: 2,
+    gutter: 12mm,
+    align: center + top,
+    [
+      *Preserved 2D coordinates*
+      #v(2mm)
+      #render-mol(docs-cid-241-sdf, skeletal: true)
+    ],
+    [
+      *Recovered collapsed coordinates*
+      #v(2mm)
+      #render-mol(docs-collapsed-layout-sdf, skeletal: true)
+    ],
+  )
+]
+
+The fallback is deliberately conservative: crowded but numerically valid coordinates are not redrawn merely because their full-mode labels overlap. Change #arg[atom-sep] or use abbreviated/skeletal mode when the geometry is valid but the typography is dense.
+
+== Atom Metadata and Explicit Labels
+
+Bracket-atom metadata remains structured through the SMILES parser, WASM boundary, formatter, and Typst renderer. Isotope numbers and formal charges use their conventional upper positions, hydrogen counts use a lower position, and atom classes remain visible as an inline `:n` suffix. Invisible balancing attachments keep the primary atom symbols aligned when differently scripted labels appear in one disconnected structure.
+
+#example[
+  ```typ
+  #grid(
+    columns: 3,
+    gutter: 8mm,
+    align: center + top,
+    [
+      *Atom class*
+      #v(2mm)
+      #render-smiles("[CH3:1]O", abbreviate: true)
+    ],
+    [
+      *Isotope + class*
+      #v(2mm)
+      #render-smiles("[13CH3:7]C", abbreviate: true)
+    ],
+    [
+      *Charge + H count*
+      #v(2mm)
+      #render-smiles("[NH4+].[Cl-]", skeletal: true)
+    ],
+  )
+  ```
+][
+  #grid(
+    columns: 3,
+    gutter: 8mm,
+    align: center + top,
+    [
+      *Atom class*
+      #v(2mm)
+      #render-smiles("[CH3:1]O", abbreviate: true)
+    ],
+    [
+      *Isotope + class*
+      #v(2mm)
+      #render-smiles("[13CH3:7]C", abbreviate: true)
+    ],
+    [
+      *Charge + H count*
+      #v(2mm)
+      #render-smiles("[NH4+].[Cl-]", skeletal: true)
+    ],
+  )
+]
+
+In full mode, explicitly represented hydrogen atoms remain separate graph nodes. In abbreviated and skeletal modes, foldable hydrogens join their parent labels, except when folding would erase a stereochemical wedge/dash or change the meaning of a bridging hydrogen.
+
+== Bond Semantics
+
+V3000 bond orders `4` through `10` remain distinct: aromatic, single-or-double, single-or-aromatic, double-or-aromatic, any, coordination, and hydrogen bonds are not collapsed to ordinary single bonds. Query and aromatic bonds use dashed/dotted partial lines, any/either bonds use a wavy line, coordination bonds preserve their donor-to-acceptor direction with a filled arrowhead, and hydrogen bonds use a dotted line. A SMILES `$` bond is rendered separately as four parallel lines.
+
+#{
+  set par(justify: false)
+  table(
+    columns: (0.45fr, 1.15fr, 1.8fr),
+    inset: 5pt,
+    align: left,
+    table.header([*V3000 order*], [*Meaning*], [*Visual cue*]),
+    [`4`], [Aromatic], [Double line with a dashed partial line],
+    [`5`], [Single or double], [Double line with a dotted partial line],
+    [`6`], [Single or aromatic], [Dashed single line],
+    [`7`], [Double or aromatic], [Dashed double line],
+    [`8`], [Any], [Wavy line],
+    [`9`], [Coordination], [Directed line with a filled arrowhead],
+    [`10`], [Hydrogen], [Dotted line],
+  )
+}
+
+#example[
+  ```typ
+  #let extended = read("bond-semantics.sdf")
+
+  #grid(
+    columns: 1,
+    row-gutter: 5mm,
+    align: center,
+    [
+      *V3000 extended bond orders*
+      #v(2mm)
+      #render-mol(
+        extended,
+        abbreviate: true,
+        config: (atom-sep: 3.0em),
+      )
+    ],
+    [
+      *OpenSMILES quadruple bond*
+      #v(2mm)
+      #render-smiles("[Cr]$[Cr]")
+    ],
+  )
+  ```
+][
+  #grid(
+    columns: 1,
+    row-gutter: 5mm,
+    align: center,
+    [
+      *V3000 extended bond orders*
+      #v(2mm)
+      #render-mol(
+        docs-bond-semantics-sdf,
+        abbreviate: true,
+        config: (atom-sep: 3.0em),
+      )
+    ],
+    [
+      *OpenSMILES quadruple bond*
+      #v(2mm)
+      #render-smiles("[Cr]$[Cr]")
+    ],
+  )
+]
+
+Long hydrogen bonds are excluded when the renderer computes a representative covalent bond length. This prevents a distant noncovalent contact from shrinking the covalent part of the structure.
+
+== SDF Stereochemical Metadata
+
+For Molfile/SDF input, up/down single bonds remain wedge/dash bonds. Undefined double-bond geometry—V2000 stereo code `3` or V3000 double-bond `CFG=2`—uses a crossed double bond. Atom `CFG` parity and V3000 `STEABS`, `STEREL`, and `STERAC` collections are retained as annotations rather than being discarded.
+
+#example[
+  ```typ
+  #let stereo-data = read("stereochemistry.sdf")
+  #render-mol(stereo-data, skeletal: true)
+  ```
+][
+  #render-mol(docs-stereochemistry-sdf, skeletal: true)
+]
+
+The explicit hydrogen above is intentionally kept visible because its wedge carries stereochemical information. The disconnected crossed double bond in the same record also demonstrates that component separation does not drop bond configuration.
+
+#pagebreak(weak: true)
+== SMILES Tetrahedral and Double-Bond Stereo
+
+OpenSMILES `@` and `@@` are interpreted using local SMILES neighbor order, not by assigning a fixed wedge to one token. Branch order, bracket hydrogens, incoming atoms, and ring-closure token positions therefore contribute to the depicted configuration. Directional `/` and `\` bonds are likewise resolved as a pair around the double bond.
+
+#example[
+  ```typ
+  #let stereo-card(title, source) = align(center)[
+    *#title*
+    #v(2mm)
+    #render-smiles(source, skeletal: true)
+  ]
+
+  #grid(
+    columns: 2,
+    gutter: 10mm,
+    row-gutter: 6mm,
+    align: top,
+    stereo-card([D-alanine · (R)], "N[C@H](C)C(=O)O"),
+    stereo-card([L-alanine · (S)], "N[C@@H](C)C(=O)O"),
+    stereo-card([E-difluoroethene], "F/C=C/F"),
+    stereo-card([Z-difluoroethene], "F/C=C\\F"),
+  )
+  ```
+][
+  #let stereo-card(title, source) = align(center)[
+    *#title*
+    #v(2mm)
+    #render-smiles(source, skeletal: true)
+  ]
+
+  #grid(
+    columns: 2,
+    gutter: 10mm,
+    row-gutter: 6mm,
+    align: top,
+    stereo-card([D-alanine · (R)], "N[C@H](C)C(=O)O"),
+    stereo-card([L-alanine · (S)], "N[C@@H](C)C(=O)O"),
+    stereo-card([E-difluoroethene], "F/C=C/F"),
+    stereo-card([Z-difluoroethene], "F/C=C\\F"),
+  )
+]
+
+The implicit-hydrogen form `N[C@@H](C)C(=O)O` and the explicit-hydrogen form `N[C@@]([H])(C)C(=O)O` describe the same local configuration and are tested to produce the same absolute orientation.
+
+#pagebreak(weak: true)
+== Multi-component Structures
+
+Disconnected Molfile/SDF graphs and dot-separated SMILES retain every component in source order. Components are separated by whitespace with no visible synthetic operator. Atom and bond indices remain global, so annotation anchors can target later components without renumbering them.
+
+#example[
+  ```typ
+  #grid(
+    columns: 1,
+    row-gutter: 5mm,
+    align: center,
+    [
+      *Dot-separated salt*
+      #v(2mm)
+      #render-smiles("[Na+].[Cl-]", abbreviate: true)
+    ],
+    [
+      *Visible isolated components*
+      #v(2mm)
+      #render-smiles("[H+].C.[Cl-]", skeletal: true)
+    ],
+  )
+  ```
+][
+  #grid(
+    columns: 1,
+    row-gutter: 5mm,
+    align: center,
+    [
+      *Dot-separated salt*
+      #v(2mm)
+      #render-smiles("[Na+].[Cl-]", abbreviate: true)
+    ],
+    [
+      *Visible isolated components*
+      #v(2mm)
+      #render-smiles("[H+].C.[Cl-]", skeletal: true)
+    ],
+  )
+]
+
+Isolated hydrogen and zero-heavy-neighbor carbon components remain visible in abbreviated and skeletal modes. Scripted labels are balanced around their primary symbols, so `H`, `CH`, and `Cl` align while the `4` in `CH`#sub[4] remains correctly lowered.
 
 = Rendering Modes
 
@@ -205,7 +530,7 @@ Both renderers support the same three modes. Full mode is useful for small molec
   #grid(
     columns: 3,
     gutter: 8mm,
-    align: horizon + center,
+    align: center + horizon,
     render-mol(mol-data),
     render-mol(mol-data, abbreviate: true),
     render-mol(mol-data, skeletal: true),
@@ -215,7 +540,7 @@ Both renderers support the same three modes. Full mode is useful for small molec
   #grid(
     columns: 3,
     gutter: 8mm,
-    align: horizon + center,
+    align: center + horizon,
     render-mol(docs-cid-241-sdf),
     render-mol(docs-cid-241-sdf, abbreviate: true),
     render-mol(docs-cid-241-sdf, skeletal: true),
@@ -849,7 +1174,35 @@ With #arg[dump], `molchemist` returns generated `alchemist` source instead of a 
 
 For scripts and editor workflows, install the `molchemist-cli` crate with `cargo install --locked molchemist-cli`. Its `molchemist dump` command accepts Molfile, SDF, or SMILES input and writes the same formatted source as #arg[dump] to standard output. Add `--standalone` to include the current `alchemist` import and an auto-sized page, or `--output figure.typ` to write directly to a file.
 
-For example, `molchemist dump molecule.sdf > molecule.typ` ejects an SDF structure, while `molchemist dump structures.sdf --record 2` selects its second record. For SMILES, use `molchemist dump --smiles "CC(=O)O" --mode skeletal`; adding `--standalone --output acetic-acid.typ` creates a complete Typst document.
+The normal output is an editable Alchemist program rather than an image or diagnostic transcript. For example, the command and its complete standard output are:
+
+```console
+$ molchemist dump --smiles 'CC(=O)O' --mode skeletal
+#let base-sep = 3em
+#skeletize({
+  hook("a0")
+  single(absolute: 29.79036703670196deg, atom-sep: base-sep * 1, name: "b0")
+  hook("a1")
+  branch({
+    double(absolute: 89.79373607661383deg, atom-sep: base-sep * 1.000062954206203, name: "b1")
+    fragment("O", name: "a2")
+  })
+  single(absolute: −30.20116835518715deg, atom-sep: base-sep * 0.9999817671902098, name: "b2")
+  fragment("OH", name: "a3")
+})
+```
+
+Redirect this snippet when it will be imported or edited inside an existing document. Use #arg[record] for a multi-record SDF, or request a complete compilable document with #arg[standalone]:
+
+```console
+$ molchemist dump molecule.sdf > molecule.typ
+$ molchemist dump structures.sdf --record 2 --mode skeletal > record-2.typ
+$ molchemist dump --smiles 'CC(=O)O' --mode skeletal \
+    --standalone --output acetic-acid.typ
+$ typst compile acetic-acid.typ
+```
+
+Input may also be piped from another program—for example, `printf '%s\n' 'c1ccccc1' | molchemist dump --format smiles > benzene.typ`. Diagnostics are written to standard error and generated source exclusively to standard output, so redirection does not mix warnings or errors into a `.typ` file.
 
 = Publication Guidance
 
@@ -861,6 +1214,7 @@ Keep annotations sparse. In most cases, a thin unboxed @cmd:callout-annotation[-
   Dense structures can still overlap in full mode, especially after SMILES implicit hydrogens are expanded. Prefer abbreviated or skeletal mode when a molecule is meant for a publication figure.
 ]
 
+#pagebreak(weak: true)
 = SMILES Notes
 
 SMILES support is a parse-and-layout pipeline. The parser accepts common SMILES notation, aromatic rings, charges, tetrahedral `@` / `@@` centers, and `/` / `\` double-bond geometry. It rejects malformed branch, dot, bond, bracket-property, charge, isotope, atom-class, directional-bond, and aromatic notation instead of normalizing it silently. Atom classes from `0` through `9999` are accepted, and aromatic systems must satisfy Hückel's rule and admit a valence-compatible Kekulé assignment. Tetrahedral centers retain OpenSMILES local neighbor order, including bracket hydrogens and ring-closure token positions.
@@ -869,13 +1223,52 @@ SMILES support is a parse-and-layout pipeline. The parser accepts common SMILES 
 #grid(
   columns: 2,
   gutter: 10mm,
-  align: horizon + center,
+  align: top + center,
   render-smiles("O=[N+]([O-])c1ccccc1", abbreviate: true),
   render-smiles("N[C@@H](C)C(=O)O", abbreviate: true),
 )
 ```)
 
 Extended OpenSMILES chirality classes are rendered geometrically when their topology permits an unambiguous projection. `@AL` uses terminal wedge/dash bonds, `@SP` uses its U/4/Z ligand path, and `@TB` / `@OH` combine the specified ligand winding with solid and hashed viewing-axis bonds. Invalid or cyclic topologies that cannot be rearranged safely retain their original chirality tag as a fallback annotation.
+
+#pagebreak(weak: true)
+#example[
+  ```typ
+  #let chiral-card(title, source) = align(center)[
+    *#title*
+    #v(2mm)
+    #render-smiles(source, skeletal: true)
+  ]
+
+  #grid(
+    columns: 2,
+    gutter: 8mm,
+    row-gutter: 7mm,
+    align: top,
+    chiral-card([Allene · `@AL1`], "NC(Br)=[C@AL1]=C(O)C"),
+    chiral-card([Square planar · `@SP2`], "[Pt@SP2](F)(Cl)(Br)I"),
+    chiral-card([Trigonal bipyramidal · `@TB5`], "[As@TB5](F)(Cl)(Br)(N)S"),
+    chiral-card([Octahedral · `@OH5`], "[Co@OH5](F)(Cl)(Br)(I)(N)S"),
+  )
+  ```
+][
+  #let chiral-card(title, source) = align(center)[
+    *#title*
+    #v(2mm)
+    #render-smiles(source, skeletal: true)
+  ]
+
+  #grid(
+    columns: 2,
+    gutter: 8mm,
+    row-gutter: 7mm,
+    align: top,
+    chiral-card([Allene · `@AL1`], "NC(Br)=[C@AL1]=C(O)C"),
+    chiral-card([Square planar · `@SP2`], "[Pt@SP2](F)(Cl)(Br)I"),
+    chiral-card([Trigonal bipyramidal · `@TB5`], "[As@TB5](F)(Cl)(Br)(N)S"),
+    chiral-card([Octahedral · `@OH5`], "[Co@OH5](F)(Cl)(Br)(I)(N)S"),
+  )
+]
 
 = API Reference
 
