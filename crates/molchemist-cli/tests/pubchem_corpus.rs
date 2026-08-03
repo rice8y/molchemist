@@ -45,6 +45,15 @@ fn requested_cids() -> Option<HashSet<u64>> {
     })
 }
 
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") || bytes.get(12..16) != Some(b"IHDR") {
+        return None;
+    }
+    let width = u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?);
+    let height = u32::from_be_bytes(bytes.get(20..24)?.try_into().ok()?);
+    Some((width, height))
+}
+
 fn render_with_timeout(
     cid: u64,
     smiles: &str,
@@ -138,9 +147,12 @@ fn downloaded_pubchem_smiles_render_and_keep_their_reference_images() {
         let image_bytes = fs::read(root.join(image)).unwrap_or_else(|error| {
             panic!("CID {cid} reference image is missing: {error}");
         });
+        let (width, height) = png_dimensions(&image_bytes)
+            .unwrap_or_else(|| panic!("CID {cid} reference image is not a valid PNG header"));
         assert!(
-            image_bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
-            "CID {cid} reference image is not a PNG"
+            width >= 100 && height >= 100 && image_bytes.len() >= 1024,
+            "CID {cid} reference image is unexpectedly small: {width}x{height}, {} bytes",
+            image_bytes.len()
         );
 
         for mode in &modes {
