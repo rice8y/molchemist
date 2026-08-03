@@ -40,6 +40,8 @@ Convert a SMILES string:
 molchemist dump --smiles 'CC(=O)Oc1ccccc1C(=O)O' --mode skeletal
 ```
 
+SMILES input is parsed strictly. Malformed branch, dot, bond, bracket-property, charge, isotope, atom-class, directional-bond, and aromatic notation returns an error instead of being normalized silently.
+
 Input can also come from standard input or `--text`:
 
 ```sh

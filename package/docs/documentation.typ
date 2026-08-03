@@ -863,7 +863,7 @@ Keep annotations sparse. In most cases, a thin unboxed @cmd:callout-annotation[-
 
 = SMILES Notes
 
-SMILES support is a parse-and-layout pipeline. The parser accepts common SMILES notation, aromatic rings, charges, tetrahedral `@` / `@@` centers, and `/` / `\` double-bond geometry. Tetrahedral centers retain OpenSMILES local neighbor order, including bracket hydrogens and ring-closure token positions.
+SMILES support is a parse-and-layout pipeline. The parser accepts common SMILES notation, aromatic rings, charges, tetrahedral `@` / `@@` centers, and `/` / `\` double-bond geometry. It rejects malformed branch, dot, bond, bracket-property, charge, isotope, atom-class, directional-bond, and aromatic notation instead of normalizing it silently. Atom classes from `0` through `9999` are accepted, and aromatic systems must satisfy Hückel's rule and admit a valence-compatible Kekulé assignment. Tetrahedral centers retain OpenSMILES local neighbor order, including bracket hydrogens and ring-closure token positions.
 
 #example(```typ
 #grid(
@@ -1094,6 +1094,7 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
 - Extended-chirality layout rotates ligand branches around a stereocenter. Invalid or cyclic topology may therefore fall back to a textual chirality annotation when its branches cannot be moved independently.
 - Annotation helpers cover common callouts and arrows, not automatic collision-free figure composition. For complex layouts, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
 - Rendering CI catches compilation failures and package/CLI source divergence on the listed Typst versions. It is not a pixel-snapshot guarantee, so review fonts and final PDF appearance for publication output.
+- Maintainers can run `scripts/check-pubchem-visual-regression.py` with the ignored local PubChem corpus for opt-in pixel regression checks; its baseline is machine-local and is not distributed with the package.
 
 = License and Dependencies
 
