@@ -167,7 +167,7 @@ Extended bonds use conventional visual cues: partial dashed or dotted parallel l
   align(center)[
     *V3000 extended bond types*
     #v(0.6em)
-    #render-mol(bond-data, abbreviate: true, config: (atom-sep: 2.2em))
+    #render-mol(bond-data, abbreviate: true, config: (atom-sep: 3.0em))
   ],
   align(center)[
     *SMILES quadruple bond*
