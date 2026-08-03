@@ -11,7 +11,7 @@ Third-party license notices and bundled example-data provenance are collected in
 Import `render-mol` for Molfile/SDF inputs, or `render-smiles` for SMILES inputs.
 
 ```typ
-#import "@preview/molchemist:0.1.3": render-mol, render-smiles
+#import "@preview/molchemist:0.1.4": render-mol, render-smiles
 
 // Read your molecule data
 // Example: https://pubchem.ncbi.nlm.nih.gov/compound/93406
@@ -38,7 +38,7 @@ SMILES parsing is strict: malformed branch, dot, bond, bracket-property, charge,
 You can overlay arrows and labels on top of a rendered molecule with the `annotations` argument. `molchemist` provides helpers for atom-level, bond-level, and molecule-level annotations without leaving the package API.
 
 ```typ
-#import "@preview/molchemist:0.1.3": (
+#import "@preview/molchemist:0.1.4": (
   render-smiles,
   atom-anchor,
   bond-anchor,

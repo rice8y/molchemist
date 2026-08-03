@@ -202,7 +202,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "molchemist-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "serde_json",
@@ -211,7 +211,7 @@ dependencies = [
 
 [[package]]
 name = "molchemist-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cc",
  "ciborium",
@@ -222,7 +222,7 @@ dependencies = [
 
 [[package]]
 name = "molchemist_plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "molchemist-core",
  "wasm-minimal-protocol",
