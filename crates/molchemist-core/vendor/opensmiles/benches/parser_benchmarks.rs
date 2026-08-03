@@ -143,8 +143,7 @@ fn bench_scaling(c: &mut Criterion) {
 /// after parsing, for molecules with different aromatic complexity.
 ///
 /// Benchmarks `parse()` alone vs `parse() + validate_aromaticity()` to
-/// isolate the validation overhead. Useful for deciding whether to enable
-/// the `huckel-validation` feature flag.
+/// isolate the validation overhead.
 fn bench_huckel(c: &mut Criterion) {
     let mut group = c.benchmark_group("huckel");
 

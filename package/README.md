@@ -36,6 +36,8 @@ The bundled documentation and README screenshots use small PubChem-derived examp
 
 For SMILES, `molchemist` generates a 2D layout internally before sending the structure to `alchemist`.
 
+SMILES parsing is strict: malformed branch, dot, bond, bracket-property, charge, isotope, atom-class, directional-bond, and aromatic notation is rejected instead of being normalized silently. Atom classes from `0` through `9999` are accepted, and aromatic systems must satisfy Hückel's rule and admit a valence-compatible Kekulé assignment.
+
 ```typ
 // Example: https://pubchem.ncbi.nlm.nih.gov/compound/896
 #render-smiles("CC(=O)NCCC1=CNC2=C1C=C(C=C2)OC", abbreviate: true)
@@ -146,7 +148,7 @@ Usable 2D coordinates are preserved exactly. If all bonded atoms collapse onto t
 
 ### Bond Semantics
 
-SDF bond orders are retained through the complete parser, AST, package, and CLI pipeline. In addition to single, double, and triple bonds, `molchemist` distinguishes aromatic, single-or-double, single-or-aromatic, double-or-aromatic, any, coordination/dative, and hydrogen bonds. V2000 `either` stereochemistry is also preserved instead of being drawn as an ordinary single bond.
+SDF bond orders are retained through the complete parser, AST, package, and CLI pipeline. In addition to single, double, and triple bonds, `molchemist` distinguishes aromatic, single-or-double, single-or-aromatic, double-or-aromatic, any, coordination/dative, and hydrogen bonds. V2000 `either` stereochemistry is also preserved instead of being drawn as an ordinary single bond. SMILES quadruple bonds written with `$`, such as `[Cr]$[Cr]`, are rendered as four parallel lines.
 
 Extended bonds use conventional visual cues: partial dashed or dotted parallel lines for aromatic and query bonds, a wavy line for any/either bonds, a direction-preserving open arrow for coordination bonds, and a dotted line for hydrogen bonds. These helpers inherit the configured `single` or `double` stroke where applicable. Long hydrogen bonds are excluded from bond-length normalization when covalent bonds are available, so they do not shrink the rest of the structure.
 
@@ -243,6 +245,7 @@ Highly complex or dense molecules can contain overlapping atom labels or interse
 - If an invalid or cyclic extended-chirality topology prevents ligand branches from being placed independently, the original chirality tag is retained as a textual stereo annotation.
 - Annotation helpers cover common callouts and arrows, not automatic collision-free figure composition. Use `cetz-annotation(...)` or dumped Alchemist source for complex layouts.
 - Rendering CI catches compilation failures and package/CLI source divergence on the listed Typst versions. It is not a pixel-snapshot guarantee, so fonts and final PDF appearance should still be reviewed for publication output.
+- Maintainers can use `scripts/check-pubchem-visual-regression.py` with the ignored local PubChem corpus for opt-in pixel regression checks; its baseline is machine-local and is not distributed with the package.
 
 ## API Reference
 

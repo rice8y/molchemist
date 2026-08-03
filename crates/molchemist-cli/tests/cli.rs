@@ -35,6 +35,53 @@ fn dumps_smiles_to_stdout_without_diagnostics() {
 }
 
 #[test]
+fn dumps_atom_classes_as_inline_label_suffixes() {
+    for mode in ["full", "abbreviate", "skeletal"] {
+        let output = molchemist()
+            .args(["dump", "--smiles", "[CH3:1]O", "--mode", mode])
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "atom class failed in {mode}");
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(" + [:1]))"), "atom class missing in {mode}");
+        assert!(
+            !stdout.contains("br: [:1]"),
+            "atom class is subscripted in {mode}"
+        );
+        if mode != "full" {
+            assert!(
+                stdout.contains("math.attach(math.attach([C#math.attach([H], b: [3])]) + [:1])"),
+                "hydrogen count or atom class order changed in {mode}"
+            );
+        }
+    }
+}
+
+#[test]
+fn dumps_smiles_quadruple_bonds_in_every_mode() {
+    for mode in ["full", "abbreviate", "skeletal"] {
+        let output = molchemist()
+            .args(["dump", "--smiles", "[Cr]$[Cr]", "--mode", mode])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "quadruple bond failed in {mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("#let _molchemist-quadruple = build-link"));
+        assert!(stdout.contains("_molchemist-quadruple(absolute:"));
+        assert!(stdout.contains("fragment(\"Cr\", name: \"a0\")"));
+        assert!(stdout.contains("fragment(\"Cr\", name: \"a1\")"));
+    }
+}
+
+#[test]
 fn dumps_disconnected_smiles_as_separate_components() {
     let output = molchemist()
         .args(["dump", "--smiles", "[Na+].[Cl-]", "--mode", "abbreviate"])
@@ -115,6 +162,50 @@ fn dumps_stereochemistry_without_folding_or_dropping_semantics() {
     assert!(stdout.contains("cram-filled-left("));
     assert!(stdout.contains("fragment(\"H\", name: \"a1\")"));
     assert!(stdout.contains("Stereo annotations: C CFG=1; OR7 (a0)"));
+}
+
+#[test]
+fn dumps_l_and_d_alanine_with_the_expected_absolute_bond_styles() {
+    let cases = [
+        ("skeletal", "cram-filled-right(", "cram-dashed-right("),
+        ("abbreviate", "cram-filled-right(", "cram-dashed-right("),
+        ("full", "cram-filled-left(", "cram-dashed-left("),
+    ];
+
+    for (mode, l_style, d_style) in cases {
+        let l_alanine = molchemist()
+            .args(["dump", "--smiles", "N[C@@H](C)C(=O)O", "--mode", mode])
+            .output()
+            .unwrap();
+        let d_alanine = molchemist()
+            .args(["dump", "--smiles", "N[C@H](C)C(=O)O", "--mode", mode])
+            .output()
+            .unwrap();
+        assert!(l_alanine.status.success(), "L-alanine failed in {mode}");
+        assert!(d_alanine.status.success(), "D-alanine failed in {mode}");
+
+        let l_source = String::from_utf8(l_alanine.stdout).unwrap();
+        let d_source = String::from_utf8(d_alanine.stdout).unwrap();
+        assert!(l_source.contains(l_style), "L-alanine {mode}: {l_source}");
+        assert!(d_source.contains(d_style), "D-alanine {mode}: {d_source}");
+        assert_ne!(l_source, d_source, "enantiomers collapsed in {mode}");
+    }
+}
+
+#[test]
+fn implicit_and_explicit_hydrogen_alanine_dump_the_same_center_orientation() {
+    let sources = ["N[C@@H](C)C(=O)O", "N[C@@]([H])(C)C(=O)O"].map(|smiles| {
+        let output = molchemist()
+            .args(["dump", "--smiles", smiles, "--mode", "skeletal"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{smiles}");
+        String::from_utf8(output.stdout).unwrap()
+    });
+
+    assert!(sources
+        .iter()
+        .all(|source| source.contains("cram-filled-right(")));
 }
 
 #[test]
@@ -341,16 +432,24 @@ fn writes_a_standalone_document_to_a_file() {
 
 #[test]
 fn rejects_invalid_smiles_without_polluting_stdout() {
-    let output = molchemist()
-        .args(["dump", "--smiles", "C("])
-        .output()
-        .unwrap();
+    for smiles in ["C(", ""] {
+        let output = molchemist()
+            .args(["dump", "--smiles", smiles])
+            .output()
+            .unwrap();
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    assert!(String::from_utf8(output.stderr)
-        .unwrap()
-        .starts_with("error: failed to convert SMILES input:"));
+        assert!(!output.status.success(), "{smiles:?}");
+        assert!(output.stdout.is_empty(), "{smiles:?}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        if smiles.is_empty() {
+            assert_eq!(stderr, "error: SMILES input is empty\n");
+        } else {
+            assert!(
+                stderr.starts_with("error: failed to convert SMILES input:"),
+                "{smiles:?}"
+            );
+        }
+    }
 }
 
 #[test]

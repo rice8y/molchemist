@@ -17,6 +17,8 @@ struct Parser<'a> {
     cycles_target: HashMap<u8, (NodeIndex, Option<BondType>)>, // (node_index, bond_type_at_open)
     node_offset: NodeIndex, // Offset for global node indexing (used in branches)
     deferred_ring_bonds: Vec<(NodeIndex, NodeIndex, BondType)>, // (main_target, local_source, bond_type)
+    pending_dot: bool,
+    allow_terminator: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -31,6 +33,8 @@ impl<'a> Parser<'a> {
             cycles_target: HashMap::new(),
             node_offset: 0,
             deferred_ring_bonds: Vec::new(),
+            pending_dot: false,
+            allow_terminator: true,
         }
     }
 
@@ -50,6 +54,8 @@ impl<'a> Parser<'a> {
             cycles_target,
             node_offset,
             deferred_ring_bonds: Vec::new(),
+            pending_dot: false,
+            allow_terminator: false,
         }
     }
 
@@ -85,6 +91,7 @@ impl<'a> Parser<'a> {
                 self.builder
                     .add_atom(elem, 0, None, aromatic, None, None, None)?;
                 self.connect_current_atom()?;
+                self.pending_dot = false;
             // Brackets Atom
             } else if c == '[' {
                 let (elem, charge, isotope, aromatic, hydrogen, class, chirality) =
@@ -92,14 +99,21 @@ impl<'a> Parser<'a> {
                 self.builder
                     .add_atom(elem, charge, isotope, aromatic, hydrogen, class, chirality)?;
                 self.connect_current_atom()?;
+                self.pending_dot = false;
 
             // Dot separator (disconnected fragments) — resets the chain
             } else if c == '.' {
-                self.next_bond_type = None;
-                self.next_bond_source = None;
-                if self.builder.nodes().is_empty() {
+                if self.pending_dot || self.next_bond_type.is_some() {
+                    return Err(ParserError::MisplacedDot);
+                }
+                if self.next_bond_source.is_none() {
+                    if !self.builder.nodes().is_empty() || self.branch_bond_type.is_some() {
+                        return Err(ParserError::MisplacedDot);
+                    }
                     self.branch_bond_type = Some(BondType::Disconnected);
                 }
+                self.next_bond_source = None;
+                self.pending_dot = true;
 
             // Explicit bond
             } else if c == '-'
@@ -110,6 +124,12 @@ impl<'a> Parser<'a> {
                 || c == '/'
                 || c == '\\'
             {
+                if self.pending_dot {
+                    return Err(ParserError::MisplacedDot);
+                }
+                if self.next_bond_type.is_some() {
+                    return Err(ParserError::ConsecutiveBondSymbols);
+                }
                 self.next_bond_type = Some(BondType::try_from(&c)?);
                 if self.builder.nodes().is_empty() {
                     self.branch_bond_type = self.next_bond_type;
@@ -118,6 +138,9 @@ impl<'a> Parser<'a> {
 
             // Branches
             } else if c == '(' {
+                if self.next_bond_source.is_none() {
+                    return Err(ParserError::BranchWithoutPrecedingAtom);
+                }
                 self.parse_branch()?;
             // cycles
             } else if c == '%' || c.is_ascii_digit() {
@@ -145,7 +168,9 @@ impl<'a> Parser<'a> {
                 if let Some((target, bond_type_at_open)) =
                     self.cycles_target.get(&cycle_number).copied()
                 {
-                    let local_index = self.get_current_atom_index()?;
+                    let local_index = self
+                        .next_bond_source
+                        .ok_or(ParserError::UnexpectedCharacter(c, self.position))?;
                     let global_source = self.node_offset + local_index;
                     let bond_type_at_close = self.next_bond_type.take();
 
@@ -209,10 +234,17 @@ impl<'a> Parser<'a> {
                 }
             // Whitespace terminates the SMILES string (OpenSMILES spec)
             } else if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-                break;
+                if self.allow_terminator {
+                    break;
+                }
+                return Err(ParserError::UnexpectedCharacter(c, self.position));
             } else {
                 return Err(ParserError::UnexpectedCharacter(c, self.position));
             }
+        }
+
+        if self.pending_dot {
+            return Err(ParserError::MisplacedDot);
         }
 
         Ok((
@@ -265,8 +297,17 @@ impl<'a> Parser<'a> {
             branch_node_offset,
             std::mem::take(&mut self.cycles_target),
         );
-        let (branch_builder, branch_bond_type, _, updated_cycles, deferred_bonds) =
-            branch_parser.parse()?;
+        let (
+            branch_builder,
+            branch_bond_type,
+            branch_next_bond_type,
+            updated_cycles,
+            deferred_bonds,
+        ) = branch_parser.parse()?;
+
+        if branch_builder.nodes().is_empty() || branch_next_bond_type.is_some() {
+            return Err(ParserError::BondWithoutFollowingAtom);
+        }
 
         // Restore the updated cycles_target
         self.cycles_target = updated_cycles;
@@ -400,12 +441,12 @@ impl<'a> Parser<'a> {
         ),
         ParserError,
     > {
-        let isotope = self.parse_isotope();
+        let isotope = self.parse_isotope()?;
 
         let first_char = self.next().ok_or(ParserError::UnexpectedEndOfInput(
             "Element identifier".to_string(),
         ))?;
-        if !first_char.is_alphabetic() && first_char != '*' {
+        if !first_char.is_ascii_alphabetic() && first_char != '*' {
             return Err(ParserError::MissingElementInBracketAtom);
         }
         let elem = self.parse_element_symbol(first_char, true)?;
@@ -414,21 +455,37 @@ impl<'a> Parser<'a> {
         let mut hydrogen: Option<u8> = None;
         let mut charge: i8 = 0;
         let mut class = None;
+        let mut property_rank = 0u8;
 
         loop {
             match self.peek() {
                 Some(&']') | None => break,
                 Some(&'@') => {
+                    if property_rank >= 1 {
+                        return Err(ParserError::InvalidBracketPropertyOrder(self.position + 1));
+                    }
+                    property_rank = 1;
                     chirality = self.parse_chirality()?;
                 }
                 Some(&'H') => {
+                    if property_rank >= 2 {
+                        return Err(ParserError::InvalidBracketPropertyOrder(self.position + 1));
+                    }
+                    property_rank = 2;
                     hydrogen = self.parse_hydrogen()?;
                 }
                 Some(&'+') | Some(&'-') => {
+                    if property_rank >= 3 {
+                        return Err(ParserError::InvalidBracketPropertyOrder(self.position + 1));
+                    }
+                    property_rank = 3;
                     charge = self.parse_charge()?;
                 }
                 Some(&':') => {
-                    class = self.parse_class();
+                    if property_rank >= 4 {
+                        return Err(ParserError::InvalidBracketPropertyOrder(self.position + 1));
+                    }
+                    class = Some(self.parse_class()?);
                     break;
                 }
                 Some(&c) => {
@@ -461,25 +518,37 @@ impl<'a> Parser<'a> {
         Ok((elem, charge, isotope, aromatic, hydrogen, class, chirality))
     }
 
-    fn parse_isotope(&mut self) -> Option<u16> {
+    fn parse_isotope(&mut self) -> Result<Option<u16>, ParserError> {
         let mut builder = String::new();
         while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             builder.push(self.next().unwrap());
         }
-        builder.parse::<u16>().ok()
+        if builder.is_empty() {
+            Ok(None)
+        } else {
+            builder
+                .parse::<u16>()
+                .map(Some)
+                .map_err(|_| ParserError::IsotopeOutOfRange(builder))
+        }
     }
 
-    fn parse_class(&mut self) -> Option<u16> {
-        if self.peek().is_some_and(|c| *c == ':') {
-            self.next();
-            let mut builder = String::new();
-            while self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                builder.push(self.next().unwrap());
-            }
-            builder.parse::<u16>().ok()
-        } else {
-            None
+    fn parse_class(&mut self) -> Result<u16, ParserError> {
+        self.next(); // consume ':'
+        let mut builder = String::new();
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+            builder.push(self.next().unwrap());
         }
+        if builder.is_empty() {
+            return Err(ParserError::MissingAtomClass);
+        }
+        let value = builder
+            .parse::<u16>()
+            .map_err(|_| ParserError::AtomClassOutOfRange(builder.clone()))?;
+        if value > 9999 {
+            return Err(ParserError::AtomClassOutOfRange(builder));
+        }
+        Ok(value)
     }
 
     fn parse_chirality(&mut self) -> Result<Option<Chirality>, ParserError> {
@@ -606,57 +675,55 @@ impl<'a> Parser<'a> {
             None => Err(ParserError::UnexpectedEndOfInput("]".to_string())),
             Some(&'H') => {
                 self.next();
-                let mut builder = String::new();
-                while self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                    builder.push(self.next().unwrap());
+                let Some(&digit) = self.peek() else {
+                    return Ok(Some(1));
+                };
+                if !digit.is_ascii_digit() {
+                    return Ok(Some(1));
                 }
-                if builder.is_empty() {
-                    Ok(Some(1))
-                } else {
-                    Ok(Some(
-                        builder
-                            .parse::<u8>()
-                            .map_err(|_| ParserError::HydrogenOutOfRange(builder))?,
-                    ))
+                self.next();
+                if self.peek().is_some_and(|next| next.is_ascii_digit()) {
+                    let mut invalid = digit.to_string();
+                    while self.peek().is_some_and(|next| next.is_ascii_digit()) {
+                        invalid.push(self.next().unwrap());
+                    }
+                    return Err(ParserError::HydrogenOutOfRange(invalid));
                 }
+                Ok(Some(digit.to_digit(10).unwrap() as u8))
             }
             _ => Ok(Some(0)),
         }
     }
 
     fn parse_charge(&mut self) -> Result<i8, ParserError> {
-        let mut charge: i8 = 0;
-        let mut builder = String::new();
-        while self
-            .peek()
-            .is_some_and(|c| c.is_ascii_digit() || *c == '+' || *c == '-')
-        {
-            match self.next() {
-                Some('+') => charge += 1,
-                Some('-') => charge -= 1,
-                Some(c) if c.is_ascii_digit() => {
-                    builder.push(c);
-                    while self.peek().is_some_and(|c| c.is_ascii_digit()) {
-                        builder.push(self.next().unwrap());
-                    }
-                }
-                _ => (),
-            }
+        let sign = self
+            .next()
+            .ok_or_else(|| ParserError::InvalidChargeSyntax(String::new()))?;
+        let multiplier = match sign {
+            '+' => 1i8,
+            '-' => -1i8,
+            _ => return Err(ParserError::ChargeWithoutSign),
+        };
+
+        if self.peek().is_some_and(|next| *next == sign) {
+            self.next();
+            return Ok(multiplier * 2);
         }
 
-        if builder.is_empty() {
-            Ok(charge)
-        } else if charge > 0 {
-            builder
-                .parse::<i8>()
-                .map_err(|_| ParserError::ChargeOutOfRange(builder))
-        } else if charge < 0 {
-            Ok(0 - builder
-                .parse::<i8>()
-                .map_err(|_| ParserError::ChargeOutOfRange(builder))?)
-        } else {
-            Err(ParserError::ChargeWithoutSign)
+        let mut digits = String::new();
+        while self.peek().is_some_and(|next| next.is_ascii_digit()) {
+            digits.push(self.next().unwrap());
         }
+        if digits.is_empty() {
+            return Ok(multiplier);
+        }
+        if digits.len() > 2 {
+            return Err(ParserError::InvalidChargeSyntax(format!("{sign}{digits}")));
+        }
+        let magnitude = digits
+            .parse::<i8>()
+            .map_err(|_| ParserError::ChargeOutOfRange(digits.clone()))?;
+        Ok(multiplier * magnitude)
     }
 
     fn connect_current_atom(&mut self) -> Result<(), ParserError> {
@@ -680,7 +747,7 @@ impl<'a> Parser<'a> {
         if self.builder.nodes().is_empty() {
             return Err(ParserError::NoAtomToBond);
         }
-        let current_atom = self.get_current_atom_index()?;
+        let current_atom = self.next_bond_source.ok_or(ParserError::NoAtomToBond)?;
         // `target` is a global atom index; convert to local branch-builder index.
         // This is always valid because `connect_ring_closure` is only called when
         // `target >= self.node_offset` (see ring-closure dispatch above).
@@ -759,6 +826,10 @@ pub fn parse(input: &str) -> Result<Molecule, ParserError> {
     let parser = Parser::new(input);
     let (builder, branch_bond_type, next_bond_type, cycles_target, _) = parser.parse()?;
 
+    if builder.nodes().is_empty() {
+        return Err(ParserError::EmptyInput);
+    }
+
     // Check for unclosed rings at the top level
     if !cycles_target.is_empty() {
         return Err(ParserError::UnclosedRing(
@@ -778,11 +849,154 @@ pub fn parse(input: &str) -> Result<Molecule, ParserError> {
     }
 
     let molecule = builder.build()?;
+    require_valid_double_bond_stereo(&molecule)?;
 
-    #[cfg(feature = "huckel-validation")]
-    {
-        crate::ast::aromaticity::require_valid_aromaticity(&molecule)?;
-    }
+    crate::ast::aromaticity::require_valid_aromaticity(&molecule)?;
 
     Ok(molecule)
+}
+
+fn require_valid_double_bond_stereo(molecule: &Molecule) -> Result<(), ParserError> {
+    let mut used_directional_bonds = std::collections::HashSet::new();
+
+    for double_bond in molecule.bonds() {
+        if double_bond.kind() != BondType::Double {
+            continue;
+        }
+        let left = double_bond.source();
+        let right = double_bond.target();
+        let left_markers = directional_markers_at(molecule, left, right);
+        let right_markers = directional_markers_at(molecule, right, left);
+
+        require_consistent_directional_markers(left, &left_markers)?;
+        require_consistent_directional_markers(right, &right_markers)?;
+
+        if left_markers.is_empty() && right_markers.is_empty() {
+            continue;
+        }
+
+        if left_markers.is_empty() || right_markers.is_empty() {
+            continue;
+        }
+
+        used_directional_bonds.extend(left_markers.iter().map(|(bond_idx, _)| *bond_idx));
+        used_directional_bonds.extend(right_markers.iter().map(|(bond_idx, _)| *bond_idx));
+    }
+
+    for (bond_idx, bond) in molecule.bonds().iter().enumerate() {
+        if matches!(bond.kind(), BondType::Up | BondType::Down)
+            && !used_directional_bonds.contains(&bond_idx)
+        {
+            return Err(ParserError::OrphanDirectionalBond(bond_idx));
+        }
+    }
+    Ok(())
+}
+
+fn directional_markers_at(
+    molecule: &Molecule,
+    center: NodeIndex,
+    other_center: NodeIndex,
+) -> Vec<(usize, i8)> {
+    molecule
+        .bonds()
+        .iter()
+        .enumerate()
+        .filter_map(|(bond_idx, bond)| {
+            let base_sign = match bond.kind() {
+                BondType::Up => 1,
+                BondType::Down => -1,
+                _ => return None,
+            };
+            if bond.source() == center && bond.target() != other_center {
+                Some((bond_idx, base_sign))
+            } else if bond.target() == center && bond.source() != other_center {
+                Some((bond_idx, -base_sign))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn require_consistent_directional_markers(
+    center: NodeIndex,
+    markers: &[(usize, i8)],
+) -> Result<(), ParserError> {
+    if markers.len() > 2 || (markers.len() == 2 && markers[0].1 == markers[1].1) {
+        return Err(ParserError::ConflictingDoubleBondStereo(center));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod strict_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_the_required_atom_class_range() {
+        assert_eq!(parse("[C:1000]").unwrap().nodes()[0].class(), Some(1000));
+        assert_eq!(parse("[C:9999]").unwrap().nodes()[0].class(), Some(9999));
+    }
+
+    #[test]
+    fn rejects_missing_or_overflowing_bracket_numbers() {
+        for smiles in ["[C:]", "[C:65536]", "[65536C]"] {
+            assert!(parse(smiles).is_err(), "{smiles}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty_input() {
+        for smiles in ["", " ", "\tcomment"] {
+            assert!(
+                matches!(parse(smiles), Err(ParserError::EmptyInput)),
+                "{smiles:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_repeated_or_out_of_order_bracket_properties() {
+        for smiles in [
+            "[C+H]", "[CHH]", "[C@@@]", "[C+-]", "[C++2]", "[C+2+]", "[CH00]",
+        ] {
+            assert!(parse(smiles).is_err(), "{smiles}");
+        }
+    }
+
+    #[test]
+    fn rejects_relaxed_branch_dot_and_bond_forms_by_default() {
+        for smiles in [
+            "C((C))O", "(CO)N", "C.", ".C", "C..C", "C(=)O", "C(C=)O", "C-=C", "CC/=C/C",
+        ] {
+            assert!(parse(smiles).is_err(), "{smiles}");
+        }
+    }
+
+    #[test]
+    fn keeps_strict_disconnected_and_ring_number_forms() {
+        assert!(parse("C.C").is_ok());
+        assert!(parse("C(.O)N").is_ok());
+        assert!(parse("C1.C1").is_ok());
+    }
+
+    #[test]
+    fn rejects_incomplete_or_conflicting_double_bond_stereo() {
+        for smiles in ["C/C=C", "C/C=CC", r"C/C(\F)=C/C", "F/C"] {
+            assert!(parse(smiles).is_err(), "{smiles}");
+        }
+        assert!(parse(r"F/C=C\F").is_ok());
+        assert!(parse("F/C=C/CC=CC").is_ok());
+    }
+
+    #[test]
+    fn rejects_semantically_invalid_aromatic_notation() {
+        for smiles in ["c", "CccccC", "c1cccc1", "C:C"] {
+            assert!(parse(smiles).is_err(), "{smiles}");
+        }
+        for smiles in ["c1ccccc1", "o1cccc1", "[nH]1cccc1", "c1ccc2ccccc2c1"] {
+            assert!(parse(smiles).is_ok(), "{smiles}");
+        }
+    }
 }

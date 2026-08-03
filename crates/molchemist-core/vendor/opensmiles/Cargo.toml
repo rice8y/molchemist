@@ -40,7 +40,6 @@ repository = "https://github.com/Peariforme/bigsmiles-rs"
 
 [features]
 default = []
-huckel-validation = []
 parallel = ["rayon"]
 
 [lib]

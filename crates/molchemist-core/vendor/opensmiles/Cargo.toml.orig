@@ -15,7 +15,6 @@ documentation = "https://docs.rs/opensmiles"
 [features]
 default = []
 parallel = ["rayon"]
-huckel-validation = []
 
 [dependencies]
 thiserror.workspace = true

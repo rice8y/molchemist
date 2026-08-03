@@ -98,6 +98,7 @@ enum BondKind {
     Single,
     Double,
     Triple,
+    Quadruple,
     Aromatic,
     SingleOrDouble,
     SingleOrAromatic,
@@ -182,6 +183,7 @@ enum SmilesBondKind {
     Single,
     Double,
     Triple,
+    Quadruple,
     Aromatic,
 }
 
@@ -197,6 +199,7 @@ struct SmilesGraph {
     atoms: Vec<SmilesAtom>,
     bonds: Vec<SmilesBond>,
     neighbor_order: Vec<Vec<usize>>,
+    hydrogen_order_positions: Vec<usize>,
     double_bond_stereo: Vec<DoubleBondStereoSpec>,
 }
 
@@ -488,6 +491,7 @@ fn sdf_layout_graph(mol: &sdfrust::Molecule) -> SmilesGraph {
         atoms,
         bonds,
         neighbor_order,
+        hydrogen_order_positions: vec![0; mol.atoms.len()],
         double_bond_stereo: Vec::new(),
     }
 }
@@ -895,6 +899,7 @@ fn render_mol_from_smiles(
                 SmilesBondKind::Single => BondKind::Single,
                 SmilesBondKind::Double => BondKind::Double,
                 SmilesBondKind::Triple => BondKind::Triple,
+                SmilesBondKind::Quadruple => BondKind::Quadruple,
                 SmilesBondKind::Aromatic => BondKind::Single,
             },
         })
@@ -911,7 +916,7 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
 
     for atom_idx in 0..graph.atoms.len() {
         let hydrogen_count = graph.atoms[atom_idx].hydrogens;
-        for _ in 0..hydrogen_count {
+        for hydrogen_offset in 0..hydrogen_count {
             let hydrogen_idx = expanded.atoms.len();
             if let Some(stereo) = &mut expanded.atoms[atom_idx].stereo {
                 if stereo.looking_from.is_none() {
@@ -938,10 +943,14 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
                 atom2: hydrogen_idx,
                 kind: SmilesBondKind::Single,
             });
-            // Bracket hydrogens precede graph neighbors in OpenSMILES local
-            // stereochemical order.
-            expanded.neighbor_order[atom_idx].insert(0, hydrogen_idx);
+            // A bracket hydrogen follows the incoming neighbor, when present,
+            // and precedes ring bonds, branches, and the continuing chain.
+            let insertion_position = graph.hydrogen_order_positions[atom_idx]
+                .saturating_add(usize::from(hydrogen_offset))
+                .min(expanded.neighbor_order[atom_idx].len());
+            expanded.neighbor_order[atom_idx].insert(insertion_position, hydrogen_idx);
             expanded.neighbor_order.push(vec![atom_idx]);
+            expanded.hydrogen_order_positions.push(1);
         }
     }
 
@@ -950,6 +959,8 @@ fn expand_smiles_graph_hydrogens(graph: &SmilesGraph) -> SmilesGraph {
 
 fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
     let molecule = parse_smiles(smiles).map_err(|e| e.to_string())?;
+    let aromatic_double_bonds = crate::ast::aromaticity::aromatic_kekule_bonds(&molecule)
+        .map_err(|error| error.to_string())?;
     let mut incident_bonds = vec![Vec::<(usize, usize)>::new(); molecule.nodes().len()];
     let mut original_to_graph = vec![None; molecule.bonds().len()];
     let mut bonds = Vec::new();
@@ -970,11 +981,15 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
             }
             SmilesBondType::Double => SmilesBondKind::Double,
             SmilesBondType::Triple => SmilesBondKind::Triple,
-            SmilesBondType::Aromatic => SmilesBondKind::Aromatic,
-            SmilesBondType::Disconnected => continue,
-            SmilesBondType::Quadruple => {
-                return Err("Quadruple bonds are not supported yet".to_string())
+            SmilesBondType::Quadruple => SmilesBondKind::Quadruple,
+            SmilesBondType::Aromatic => {
+                if aromatic_double_bonds.contains(&bond_idx) {
+                    SmilesBondKind::Double
+                } else {
+                    SmilesBondKind::Single
+                }
             }
+            SmilesBondType::Disconnected => continue,
         };
 
         original_to_graph[bond_idx] = Some(bonds.len());
@@ -985,12 +1000,15 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
         });
     }
 
-    let chiral_neighbor_order = smiles_neighbor_order(smiles, molecule.nodes().len())
-        .unwrap_or_else(|| {
-            incident_bonds
-                .iter()
-                .map(|bonds| bonds.iter().map(|&(_, neighbor)| neighbor).collect())
-                .collect()
+    let (chiral_neighbor_order, hydrogen_order_positions) =
+        smiles_neighbor_order(smiles, molecule.nodes().len()).unwrap_or_else(|| {
+            (
+                incident_bonds
+                    .iter()
+                    .map(|bonds| bonds.iter().map(|&(_, neighbor)| neighbor).collect())
+                    .collect(),
+                vec![0; molecule.nodes().len()],
+            )
         });
 
     let atoms = molecule
@@ -1016,6 +1034,10 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
                     node.chirality(),
                     node.hydrogens(),
                     &chiral_neighbor_order,
+                    hydrogen_order_positions
+                        .get(atom_idx)
+                        .copied()
+                        .unwrap_or_default(),
                 ),
                 extended_stereo: extended_atom_stereo_spec(
                     node.chirality(),
@@ -1028,19 +1050,19 @@ fn parse_smiles_graph(smiles: &str) -> Result<SmilesGraph, String> {
 
     let double_bond_stereo = build_double_bond_stereo_specs(&molecule, &original_to_graph);
 
-    kekulize_aromatic_bonds(atoms.len(), &mut bonds);
-
     Ok(SmilesGraph {
         atoms,
         bonds,
         neighbor_order: chiral_neighbor_order,
+        hydrogen_order_positions,
         double_bond_stereo,
     })
 }
 
-fn smiles_neighbor_order(smiles: &str, atom_count: usize) -> Option<Vec<Vec<usize>>> {
+fn smiles_neighbor_order(smiles: &str, atom_count: usize) -> Option<(Vec<Vec<usize>>, Vec<usize>)> {
     let bytes = smiles.as_bytes();
     let mut neighbors = vec![Vec::<Option<usize>>::new(); atom_count];
+    let mut hydrogen_order_positions = vec![0; atom_count];
     let mut current: Option<usize> = None;
     let mut branches = Vec::new();
     let mut rings = HashMap::<u16, (usize, usize)>::new();
@@ -1071,6 +1093,9 @@ fn smiles_neighbor_order(smiles: &str, atom_count: usize) -> Option<Vec<Vec<usiz
                 neighbors[previous].push(Some(atom));
                 neighbors[atom].push(Some(previous));
             }
+            // Bracket properties occur after the incoming connection and
+            // before any ring bonds, branches, or continuing-chain neighbor.
+            hydrogen_order_positions[atom] = neighbors[atom].len();
             current = Some(atom);
             cursor += atom_width;
             continue;
@@ -1103,10 +1128,11 @@ fn smiles_neighbor_order(smiles: &str, atom_count: usize) -> Option<Vec<Vec<usiz
     if next_atom != atom_count || !branches.is_empty() || !rings.is_empty() {
         return None;
     }
-    neighbors
+    let neighbors = neighbors
         .into_iter()
         .map(|neighbors| neighbors.into_iter().collect::<Option<Vec<_>>>())
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    Some((neighbors, hydrogen_order_positions))
 }
 
 fn record_ring_neighbor(
@@ -1131,6 +1157,7 @@ fn atom_stereo_spec(
     chirality: Option<SmilesChirality>,
     hydrogen_count: u8,
     neighbor_order: &[Vec<usize>],
+    hydrogen_order_position: usize,
 ) -> Option<AtomStereoSpec> {
     let direction = match chirality {
         Some(SmilesChirality::TH1) => AtomStereoDirection::CounterClockwise,
@@ -1138,22 +1165,23 @@ fn atom_stereo_spec(
         _ => return None,
     };
 
-    let mut neighbors = Vec::with_capacity(4);
+    let mut neighbors = neighbor_order
+        .get(atom_idx)?
+        .iter()
+        .map(|&neighbor| Some(neighbor))
+        .collect::<Vec<_>>();
     match hydrogen_count {
         0 => {}
         1 => {
-            // OpenSMILES places a bracket hydrogen first in the local chiral
-            // neighbor order, even though it has no graph node yet.
-            neighbors.push(None);
+            // The bracket H occupies its lexical position after the incoming
+            // neighbor (if any), rather than preceding every graph neighbor.
+            if hydrogen_order_position > neighbors.len() {
+                return None;
+            }
+            neighbors.insert(hydrogen_order_position, None);
         }
         _ => return None,
     }
-    neighbors.extend(
-        neighbor_order
-            .get(atom_idx)?
-            .iter()
-            .map(|&neighbor| Some(neighbor)),
-    );
 
     if neighbors.len() == 3 {
         // A three-coordinate tetrahedral center may use an implicit lone pair
@@ -1370,111 +1398,6 @@ fn directional_marker_for_center(
     })
 }
 
-fn kekulize_aromatic_bonds(atom_count: usize, bonds: &mut [SmilesBond]) {
-    let mut aromatic_adj = vec![Vec::new(); atom_count];
-    for (bond_idx, bond) in bonds.iter().enumerate() {
-        if bond.kind == SmilesBondKind::Aromatic {
-            aromatic_adj[bond.atom1].push(bond_idx);
-            aromatic_adj[bond.atom2].push(bond_idx);
-        }
-    }
-
-    let mut visited = vec![false; atom_count];
-    for start in 0..atom_count {
-        if visited[start] || aromatic_adj[start].is_empty() {
-            continue;
-        }
-
-        let mut queue = VecDeque::from([start]);
-        let mut component_atoms = Vec::new();
-        let mut component_edges = HashSet::new();
-        visited[start] = true;
-
-        while let Some(atom) = queue.pop_front() {
-            component_atoms.push(atom);
-            for &bond_idx in &aromatic_adj[atom] {
-                component_edges.insert(bond_idx);
-                let bond = &bonds[bond_idx];
-                let other = if bond.atom1 == atom {
-                    bond.atom2
-                } else {
-                    bond.atom1
-                };
-                if !visited[other] {
-                    visited[other] = true;
-                    queue.push_back(other);
-                }
-            }
-        }
-
-        let mut edge_indices = component_edges.into_iter().collect::<Vec<_>>();
-        edge_indices.sort_unstable_by_key(|&bond_idx| {
-            let bond = &bonds[bond_idx];
-            (
-                usize::MAX - (aromatic_adj[bond.atom1].len() + aromatic_adj[bond.atom2].len()),
-                bond_idx,
-            )
-        });
-
-        let mut used_atoms = vec![false; atom_count];
-        let mut current = Vec::new();
-        let mut best = Vec::new();
-        search_max_matching(
-            &edge_indices,
-            bonds,
-            0,
-            &mut used_atoms,
-            &mut current,
-            &mut best,
-        );
-
-        let best: HashSet<_> = best.into_iter().collect();
-        for bond_idx in edge_indices {
-            bonds[bond_idx].kind = if best.contains(&bond_idx) {
-                SmilesBondKind::Double
-            } else {
-                SmilesBondKind::Single
-            };
-        }
-    }
-}
-
-fn search_max_matching(
-    edge_indices: &[usize],
-    bonds: &[SmilesBond],
-    pos: usize,
-    used_atoms: &mut [bool],
-    current: &mut Vec<usize>,
-    best: &mut Vec<usize>,
-) {
-    if pos == edge_indices.len() {
-        if current.len() > best.len() {
-            *best = current.clone();
-        }
-        return;
-    }
-
-    let remaining = edge_indices.len() - pos;
-    if current.len() + remaining <= best.len() {
-        return;
-    }
-
-    let bond_idx = edge_indices[pos];
-    let bond = &bonds[bond_idx];
-
-    if !used_atoms[bond.atom1] && !used_atoms[bond.atom2] {
-        used_atoms[bond.atom1] = true;
-        used_atoms[bond.atom2] = true;
-        current.push(bond_idx);
-        search_max_matching(edge_indices, bonds, pos + 1, used_atoms, current, best);
-        current.pop();
-        used_atoms[bond.atom1] = false;
-        used_atoms[bond.atom2] = false;
-    }
-
-    search_max_matching(edge_indices, bonds, pos + 1, used_atoms, current, best);
-}
-
 fn encode_layout_input(graph: &SmilesGraph) -> Vec<u8> {
     let atom_stereo_count = graph
         .atoms
@@ -1504,6 +1427,7 @@ fn encode_layout_input(graph: &SmilesGraph) -> Vec<u8> {
             SmilesBondKind::Single => 1,
             SmilesBondKind::Double => 2,
             SmilesBondKind::Triple => 3,
+            SmilesBondKind::Quadruple => 4,
             SmilesBondKind::Aromatic => 1,
         });
     }
@@ -2452,6 +2376,7 @@ fn bond_func_name(
     match kind {
         BondKind::Double => "double",
         BondKind::Triple => "triple",
+        BondKind::Quadruple => "quadruple",
         BondKind::Single => "single",
         BondKind::Aromatic => "aromatic",
         BondKind::SingleOrDouble => "single-or-double",
@@ -3387,6 +3312,28 @@ mod tests {
     }
 
     #[test]
+    fn smiles_quadruple_bond_is_preserved_for_layout_and_rendering() {
+        for mode in [
+            RenderMode::Full,
+            RenderMode::Abbreviate,
+            RenderMode::Skeletal,
+        ] {
+            let payload = smiles_layout_input("[Cr]$[Cr]", mode).unwrap();
+            let (atoms, bonds, atom_stereo, double_bond_stereo) = decode_layout_input(&payload);
+            assert_eq!(atoms, vec![24, 24]);
+            assert_eq!(bonds, vec![(0, 1, 4)]);
+            assert!(atom_stereo.is_empty());
+            assert!(double_bond_stereo.is_empty());
+
+            let coords = coordinate_payload(&[(0.0, 0.0), (1.0, 0.0)], 1);
+            let commands = smiles_to_commands_with_coords("[Cr]$[Cr]", &coords, mode).unwrap();
+            let mut rendered_bonds = Vec::new();
+            collect_bonds(&commands, &mut rendered_bonds);
+            assert_eq!(rendered_bonds, vec![("quadruple".to_string(), 1.0, None)]);
+        }
+    }
+
+    #[test]
     fn aromatic_ring_is_kekulized_for_layout() {
         let payload = smiles_to_layout_input(b"c1ccccc1").unwrap();
         let (_, bonds, _, _) = decode_layout_input(&payload);
@@ -3400,6 +3347,44 @@ mod tests {
             bonds.iter().map(|(_, _, order)| *order).collect::<Vec<_>>(),
             vec![2, 1, 2, 1, 2, 1]
         );
+    }
+
+    #[test]
+    fn aromatic_heteroatoms_do_not_receive_kekule_double_bonds() {
+        for smiles in ["o1cccc1", "c1occc1", "[nH]1cccc1", "c1cc[nH]c1"] {
+            let graph = parse_smiles_graph(smiles).unwrap();
+            let hetero = graph
+                .atoms
+                .iter()
+                .position(|atom| atom.element == "O" || atom.element == "N")
+                .unwrap();
+            assert!(
+                graph.bonds.iter().all(|bond| {
+                    (bond.atom1 != hetero && bond.atom2 != hetero)
+                        || bond.kind == SmilesBondKind::Single
+                }),
+                "{smiles}"
+            );
+            assert_eq!(
+                graph
+                    .bonds
+                    .iter()
+                    .filter(|bond| bond.kind == SmilesBondKind::Double)
+                    .count(),
+                2,
+                "{smiles}"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_aromatic_and_explicit_kekule_bonds_are_supported() {
+        let graph = parse_smiles_graph("OCCc1c(C)[n+](=cs1)Cc2cnc(C)nc(N)2").unwrap();
+        assert_eq!(graph.atoms.len(), 18);
+        assert!(graph
+            .bonds
+            .iter()
+            .any(|bond| bond.atom1 == 6 && bond.atom2 == 7 && bond.kind == SmilesBondKind::Double));
     }
 
     #[test]
@@ -3445,7 +3430,7 @@ mod tests {
         }
         coords.extend_from_slice(&[0]);
 
-        let ast_bytes = smiles_to_ast(b"[n+]C", &coords, b"abbreviate").unwrap();
+        let ast_bytes = smiles_to_ast(b"[N+]C", &coords, b"abbreviate").unwrap();
         let ast: Value = ciborium::from_reader(ast_bytes.as_slice()).unwrap();
         let ast = ast.as_array().unwrap();
         let mut labels = Vec::new();
@@ -3535,17 +3520,45 @@ mod tests {
     }
 
     #[test]
-    fn tetrahedral_chirality_is_encoded_for_layout() {
+    fn tetrahedral_chirality_keeps_incoming_atom_before_bracket_hydrogen() {
         let payload = smiles_to_layout_input(b"N[C@@H](C)C(=O)O").unwrap();
         let (_, _, atom_stereo, _) = decode_layout_input(&payload);
 
         assert_eq!(atom_stereo.len(), 1);
         let (atom, looking_from, atom1, atom2, direction) = atom_stereo[0];
         assert_eq!(atom, 1);
-        assert_eq!(looking_from, u32::MAX);
-        assert_eq!(atom1, 0);
+        assert_eq!(looking_from, 0);
+        assert_eq!(atom1, u32::MAX);
         assert_eq!(atom2, 2);
         assert_eq!(direction, 1);
+    }
+
+    #[test]
+    fn implicit_and_explicit_bracket_hydrogen_use_equivalent_local_order() {
+        let implicit = smiles_to_layout_input(b"N[C@@H](C)C(=O)O").unwrap();
+        let explicit = smiles_to_layout_input(b"N[C@@]([H])(C)C(=O)O").unwrap();
+        let (_, _, implicit_stereo, _) = decode_layout_input(&implicit);
+        let (_, _, explicit_stereo, _) = decode_layout_input(&explicit);
+
+        assert_eq!(implicit_stereo, vec![(1, 0, u32::MAX, 2, 1)]);
+        assert_eq!(explicit_stereo, vec![(1, 0, 2, 3, 1)]);
+    }
+
+    #[test]
+    fn bracket_hydrogen_position_follows_component_and_branch_incoming_bonds() {
+        let cases = [
+            ("[C@H](F)(Cl)Br", 0, 0),
+            ("N[C@@H](C)C(=O)O", 1, 1),
+            ("C([C@H](F)Cl)O", 1, 1),
+            ("[Na+].[C@H](F)(Cl)Br", 1, 0),
+            ("N[C@H]1CCCCC1", 1, 1),
+        ];
+
+        for (smiles, atom, expected_position) in cases {
+            let (_, positions) =
+                smiles_neighbor_order(smiles, parse_smiles(smiles).unwrap().nodes().len()).unwrap();
+            assert_eq!(positions[atom], expected_position, "{smiles}");
+        }
     }
 
     #[test]
@@ -3574,6 +3587,21 @@ mod tests {
         assert_eq!(atoms.len(), 5);
         assert_eq!(bonds.last(), Some(&(0, 4, 1)));
         assert_eq!(atom_stereo, vec![(0, 4, 1, 2, 2)]);
+    }
+
+    #[test]
+    fn full_layout_keeps_nonleading_bracket_hydrogen_after_incoming_atom() {
+        let payload = smiles_to_full_layout_input(b"N[C@@H](C)C(=O)O").unwrap();
+        let (atoms, _, atom_stereo, _) = decode_layout_input(&payload);
+        let [(center, looking_from, hydrogen, atom2, direction)] = atom_stereo.as_slice() else {
+            panic!("expected one tetrahedral center");
+        };
+
+        assert_eq!(*center, 1);
+        assert_eq!(*looking_from, 0);
+        assert_eq!(atoms[*hydrogen as usize], 1);
+        assert_eq!(*atom2, 2);
+        assert_eq!(*direction, 1);
     }
 
     #[test]
@@ -3784,7 +3812,11 @@ mod tests {
         let mut full_stereo = HashMap::new();
         let full_depicted =
             apply_extended_stereo_depictions(&full_graph, &mut full_coords, &mut full_stereo);
-        let terminal_hydrogen = full_graph.neighbor_order[4][0];
+        let terminal_hydrogen = full_graph.neighbor_order[4]
+            .iter()
+            .copied()
+            .find(|&neighbor| full_graph.atoms[neighbor].element == "H")
+            .unwrap();
 
         assert_eq!(full_depicted, HashSet::from([3]));
         assert_eq!(full_graph.atoms[terminal_hydrogen].element, "H");

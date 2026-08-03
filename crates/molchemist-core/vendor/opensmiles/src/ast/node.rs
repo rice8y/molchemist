@@ -36,7 +36,7 @@ impl Node {
         match class {
             None => (),
             Some(value) => {
-                if value > 999 {
+                if value > 9999 {
                     return Err(NodeError::InvalidClass(value));
                 }
             }

@@ -19,6 +19,9 @@ pub enum ParserError {
     #[error("At least one node is necessary before creating a bond")]
     NoAtomToBond,
 
+    #[error("SMILES input must contain at least one atom")]
+    EmptyInput,
+
     /// Unexpected character in SMILES string.
     #[error("unexpected character '{0}' at position {1}")]
     UnexpectedCharacter(char, usize),
@@ -34,6 +37,21 @@ pub enum ParserError {
     #[error("charge in bracket atom must have a sign")]
     ChargeWithoutSign,
 
+    #[error("invalid bracket atom property order or repetition at position {0}")]
+    InvalidBracketPropertyOrder(usize),
+
+    #[error("atom class must contain at least one digit")]
+    MissingAtomClass,
+
+    #[error("atom class is out of range: {0}")]
+    AtomClassOutOfRange(String),
+
+    #[error("isotope is out of range: {0}")]
+    IsotopeOutOfRange(String),
+
+    #[error("invalid charge syntax: {0}")]
+    InvalidChargeSyntax(String),
+
     /// Missing closing parenthesis.
     #[error("missing closing parenthesis ')'")]
     UnclosedParenthesis,
@@ -45,6 +63,21 @@ pub enum ParserError {
     /// Empty branch.
     #[error("empty branch detected")]
     EmptyBranch,
+
+    #[error("branch without preceding atom")]
+    BranchWithoutPrecedingAtom,
+
+    #[error("misplaced dot separator")]
+    MisplacedDot,
+
+    #[error("consecutive bond symbols are not allowed")]
+    ConsecutiveBondSymbols,
+
+    #[error("conflicting directional bonds at atom {0}")]
+    ConflictingDoubleBondStereo(NodeIndex),
+
+    #[error("directional bond {0} is not part of a stereochemical double-bond specification")]
+    OrphanDirectionalBond(usize),
 
     /// Unclosed ring.
     #[error("unclosed ring(s): {0:?}")]

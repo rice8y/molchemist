@@ -76,6 +76,22 @@
   )
 })
 
+#let _molchemist-quadruple = build-link((length, ctx, cetz-ctx, args) => {
+  import cetz.draw: *
+  let gap = utils.convert-length(
+    cetz-ctx,
+    args.at("gap", default: ctx.config.double.gap),
+  )
+  let stroke = args.at("stroke", default: ctx.config.double.stroke)
+  for offset in (-1.5, -0.5, 0.5, 1.5) {
+    line(
+      (0, offset * gap),
+      (length, offset * gap),
+      stroke: stroke,
+    )
+  }
+})
+
 #let _molchemist-coordination-right = build-link((length, ctx, _, args) => {
   import cetz.draw: *
   line(
@@ -105,6 +121,7 @@
 #let get-b-func(b-type) = {
   if b-type == "double" { double }
   else if b-type == "triple" { triple }
+  else if b-type == "quadruple" { _molchemist-quadruple }
   else if b-type == "aromatic" { _molchemist-aromatic }
   else if b-type == "single-or-double" { _molchemist-single-or-double }
   else if b-type == "single-or-aromatic" { _molchemist-single-or-aromatic }
@@ -151,12 +168,17 @@
   let isotope = atom.at("isotope", default: none)
   let atom-map = atom.at("atomMap", default: none)
 
-  math.equation(math.attach(
+  let chemical-label = math.attach(
     base,
     tl: if isotope == none { none } else { [#isotope] },
     tr: if top-right == [] { none } else { top-right },
-    br: if atom-map == none { none } else { [:#atom-map] },
-  ))
+  )
+  let label = if atom-map == none {
+    chemical-label
+  } else {
+    math.attach(chemical-label + [:#atom-map])
+  }
+  math.equation(label)
 }
 
 #let _render-ast(cmds, base-sep, config: (:)) = {

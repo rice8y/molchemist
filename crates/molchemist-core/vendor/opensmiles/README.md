@@ -14,7 +14,7 @@ A fast, correct SMILES parser for Rust, following the [OpenSMILES specification]
 - Canonical SMILES output via `Display` (round-trip)
 - Detailed parse errors with character position
 - Optional parallel batch parsing with Rayon
-- Optional Hückel's rule aromaticity validation (4n+2 π-electron check)
+- Hückel's rule and valence-compatible aromaticity validation
 - Zero unsafe code, no C dependencies
 
 ## Installation
@@ -24,11 +24,11 @@ A fast, correct SMILES parser for Rust, following the [OpenSMILES specification]
 opensmiles = "0.1"
 ```
 
-With optional features:
+With optional parallel parsing:
 
 ```toml
 [dependencies]
-opensmiles = { version = "0.1", features = ["parallel", "huckel-validation"] }
+opensmiles = { version = "0.1", features = ["parallel"] }
 ```
 
 ## Usage
@@ -107,11 +107,9 @@ See the full [benchmark dashboard](https://peariforme.github.io/bigsmiles-rs/dev
 
 ### Aromaticity validation (Hückel's rule)
 
-Enable the `huckel-validation` feature to have `parse()` reject chemically invalid aromatic rings:
+`parse()` rejects aromatic atoms outside rings, invalid aromatic bonds, rings that violate Hückel's rule, and aromatic systems without a valence-compatible Kekulé assignment:
 
 ```rust
-// With the feature enabled, this returns Err(MoleculeError::HuckelViolation)
-// for rings that don't satisfy 4n+2 π electrons.
 let mol = parse("c1ccccc1").unwrap(); // benzene: 6 π-electrons ✓
 ```
 
@@ -154,7 +152,6 @@ assert_eq!(checks[0].pi_electrons, Some(6));
 | Flag | Default | Description |
 |------|---------|-------------|
 | `parallel` | off | Multi-threaded batch parsing via [Rayon](https://crates.io/crates/rayon) |
-| `huckel-validation` | off | Reject aromatic rings violating Hückel's 4n+2 rule in `parse()` |
 
 ## Part of the bigsmiles-rs ecosystem
 

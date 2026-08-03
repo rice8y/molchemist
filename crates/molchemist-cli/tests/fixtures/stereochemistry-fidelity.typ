@@ -10,11 +10,17 @@
   column-gutter: 5mm,
   align: (left + horizon, center + horizon),
   [SDF stereo], render-mol(sdf, skeletal: true),
-  [Tetrahedral], grid(
+  [D / L alanine], grid(
     columns: 2,
     gutter: 4mm,
     render-smiles("N[C@H](C)C(=O)O", abbreviate: true),
     render-smiles("N[C@@H](C)C(=O)O", abbreviate: true),
+  ),
+  [Implicit / explicit H], grid(
+    columns: 2,
+    gutter: 4mm,
+    render-smiles("N[C@@H](C)C(=O)O", skeletal: true),
+    render-smiles("N[C@@]([H])(C)C(=O)O", skeletal: true),
   ),
   [Leading center], grid(
     columns: 2,
