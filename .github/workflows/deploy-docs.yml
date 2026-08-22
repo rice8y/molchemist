@@ -68,11 +68,8 @@ jobs:
       - name: Pull Vercel environment
         run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
 
-      - name: Build docs
-        run: vercel build --prod --token "$VERCEL_TOKEN"
-
-      - name: Deploy docs
-        run: vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+      - name: Build and deploy docs
+        run: vercel deploy --prod --force --token "$VERCEL_TOKEN"
 
       - name: Verify production docs
         run: |
