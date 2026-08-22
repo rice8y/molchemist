@@ -57,6 +57,10 @@
     read("layout-robustness.sdf", encoding: none),
     "skeletal",
   ),
+  ctfile-fidelity: dump-sdf(
+    read("ctfile-fidelity.sdf", encoding: none),
+    "full",
+  ),
   benzene: dump-smiles("c1ccccc1", "skeletal"),
   charged: dump-smiles("OCCc1c(C)[n+](=cs1)Cc2cnc(C)nc(N)2", "abbreviate"),
   chiral: dump-smiles("N[C@@H](C)C(=O)O", "full"),

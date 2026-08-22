@@ -134,11 +134,9 @@ def write_comparison_source(path: Path) -> None:
 
 #let include-stress = sys.inputs.at("include-stress", default: "false") == "true"
 #let cases = json("manifest.json").filter(case => include-stress or not case.stress)
-#let card(case) = block(
+#let comparison(case) = block(
   breakable: false,
-  inset: 6pt,
-  radius: 3pt,
-  stroke: 0.5pt + luma(180),
+  inset: (y: 6pt),
 )[
   #text(weight: "bold")[CID #case.cid · #case.title]
   #h(0.6em)
@@ -170,7 +168,7 @@ def write_comparison_source(path: Path) -> None:
 ]
 
 #for case in cases {
-  card(case)
+  comparison(case)
   v(5pt)
 }
 ''',
