@@ -67,7 +67,8 @@ jobs:
           typst-version: "0.14.2"
           cache-dependency-path: package/docs/documentation.typ
       - name: Compile the manual with its pinned authoring toolchain
-        run: typst compile --root package package/docs/documentation.typ /tmp/documentation.pdf
+        working-directory: package
+        run: typst compile --root "$PWD" docs/documentation.typ /tmp/documentation.pdf
 
   typst-package:
     name: Package Typst package
