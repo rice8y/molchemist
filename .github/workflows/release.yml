@@ -65,7 +65,6 @@ jobs:
       - uses: typst-community/setup-typst@v5
         with:
           typst-version: "0.14.2"
-          cache-dependency-path: package/docs/documentation.typ
       - name: Compile the manual with its pinned authoring toolchain
         working-directory: package
         run: typst compile --root "$PWD" docs/documentation.typ /tmp/documentation.pdf
