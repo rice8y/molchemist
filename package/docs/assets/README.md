@@ -4,7 +4,25 @@ This directory contains small molecule structure files used by the `molchemist` 
 
 ## Synthetic Fidelity Fixtures
 
-The files `sdf-version-records.sdf`, `bond-semantics.sdf`, `stereochemistry.sdf`, and `collapsed-layout.sdf` are small synthetic structures authored for this repository. They exercise record selection, V2000/V3000 parsing, extended bond types, stereochemical metadata, and automatic layout recovery without introducing additional third-party data.
+The files `sdf-version-records.sdf`, `bond-semantics.sdf`, `stereochemistry.sdf`, `collapsed-layout.sdf`, `ctfile-fidelity.sdf`, `ctfile-attachments-collections.sdf`, and `highlight-shapes.sdf` are small synthetic structures authored for this repository. They exercise record selection, V2000/V3000 parsing, extended bond types, stereochemical metadata, CTfile queries/SGroups/highlights, position-variation bonds, user-defined COLLECTION preservation, and automatic layout recovery without introducing additional third-party data.
+
+`highlight-shapes.sdf` contains five independently selectable records covering a hidden skeletal atom, a long query glyph, a diagonal bond capsule, a connected atom/bond union, and disconnected highlight regions. The code and its typeset result are defined directly in `../documentation.typ`.
+
+## RDKit / ACD Labs Superatom Fixture
+
+- File: `Sgroups_Abbreviations.mol`
+- Source: RDKit `Code/GraphMol/FileParsers/sgroup_test_data/Sgroups_Abbreviations.mol`, originally written by ACD/Labs
+- Source URL: <https://github.com/rdkit/rdkit/blob/b421f19c9f564d0cb66148c4e614c59abadf5413/Code/GraphMol/FileParsers/sgroup_test_data/Sgroups_Abbreviations.mol>
+- Copied from RDKit commit `b421f19c9f564d0cb66148c4e614c59abadf5413` on 2026-08-21.
+- Local modification: CRLF line endings were normalized to LF; the CTfile content is otherwise unchanged.
+
+## RDKit / ACD Labs Link-node Fixture
+
+- File: `Sgroups_Link_01.mol`
+- Source: RDKit `Code/GraphMol/FileParsers/sgroup_test_data/Sgroups_Link_01.mol`, originally written by ACD/Labs
+- Source URL: <https://github.com/rdkit/rdkit/blob/b421f19c9f564d0cb66148c4e614c59abadf5413/Code/GraphMol/FileParsers/sgroup_test_data/Sgroups_Link_01.mol>
+- Copied from RDKit commit `b421f19c9f564d0cb66148c4e614c59abadf5413` on 2026-08-22.
+- Local modification: CRLF line endings were normalized to LF; the CTfile content is otherwise unchanged.
 
 ## PubChem CID 241
 
