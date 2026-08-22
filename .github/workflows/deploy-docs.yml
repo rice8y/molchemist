@@ -1,0 +1,89 @@
+name: Deploy documentation
+
+run-name: Deploy documentation from ${{ inputs.ref }}
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git branch, tag, or commit SHA to deploy
+        required: true
+        type: string
+    secrets:
+      VERCEL_ORG_ID:
+        required: true
+      VERCEL_PROJECT_ID:
+        required: true
+      VERCEL_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git branch, tag, or commit SHA to deploy
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: molchemist-production-docs
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy documentation only
+    runs-on: ubuntu-latest
+
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+    steps:
+      - name: Checkout deployment source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Validate manual deployment source
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "Manual deployments must use a commit contained in main." >&2
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@58.4.4
+
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+
+      - name: Build docs
+        run: vercel build --prod --token "$VERCEL_TOKEN"
+
+      - name: Deploy docs
+        run: vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
+
+      - name: Verify production docs
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' https://molchemist.vercel.app/ || true)"
+            if [ "$status" = 200 ]; then
+              exit 0
+            fi
+            if [ "$attempt" = 6 ]; then
+              echo "Production documentation returned HTTP ${status}." >&2
+              exit 1
+            fi
+            sleep 5
+          done
