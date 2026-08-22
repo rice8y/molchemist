@@ -96,6 +96,16 @@ fn typst_and_cli_outputs_match_exactly() {
         "collapsed-coordinate SDF parity failed"
     );
 
+    let ctfile = include_str!("fixtures/ctfile-fidelity.sdf");
+    let cli = generator
+        .sdf_to_code(ctfile, RenderMode::Full, "3em", 2)
+        .unwrap();
+    assert_eq!(
+        wasm.get("ctfile-fidelity").unwrap(),
+        &cli,
+        "CTfile fidelity SDF parity failed"
+    );
+
     for (name, smiles, mode) in cases {
         let cli = generator.smiles_to_code(smiles, mode, "3em", 2).unwrap();
         assert_eq!(wasm.get(name).unwrap(), &cli, "parity failed for {name}");

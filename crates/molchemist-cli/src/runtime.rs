@@ -32,6 +32,26 @@ impl Generator {
         self.sdf_record_to_code(sdf, mode, 1, atom_sep, indent)
     }
 
+    pub fn inspect_sdf_record_json(
+        &mut self,
+        sdf: &str,
+        record: usize,
+        pretty: bool,
+    ) -> Result<String, String> {
+        let record = record.to_string();
+        let output = self.core.call(
+            "sdf_record_to_inspection",
+            &[sdf.as_bytes(), record.as_bytes()],
+        )?;
+        let inspection: serde_json::Value = ciborium::from_reader(output.as_slice())
+            .map_err(|error| format!("core plugin returned invalid inspection CBOR: {error}"))?;
+        if pretty {
+            serde_json::to_string_pretty(&inspection).map_err(|error| error.to_string())
+        } else {
+            serde_json::to_string(&inspection).map_err(|error| error.to_string())
+        }
+    }
+
     pub fn sdf_record_to_code(
         &mut self,
         sdf: &str,

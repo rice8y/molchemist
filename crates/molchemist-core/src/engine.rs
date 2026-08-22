@@ -1,6 +1,7 @@
+use crate::semantic::{contractible_superatom_indexes, SdfAtomMetadata};
 use crate::{
-    parse as parse_smiles, AtomSymbol, BondType as SmilesBondType, Chirality as SmilesChirality,
-    Molecule as SmilesMolecule,
+    parse as parse_smiles, AtomSymbol, BondType as SmilesBondType, ChemicalBondOrder,
+    ChemicalRecord, Chirality as SmilesChirality, Molecule as SmilesMolecule,
 };
 use sdfrust::{parse_sdf_auto_string, BondOrder, BondStereo, SdfFormat};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,20 @@ pub enum Command {
     /// Reset placement before rendering the next disconnected component.
     #[serde(rename = "component-break")]
     ComponentBreak,
+    /// CTfile display metadata rendered as an overlay after the molecular skeleton.
+    #[serde(rename = "ctfile")]
+    Ctfile {
+        sgroups: Vec<CtfileSGroupDepiction>,
+        highlights: Vec<CtfileHighlightDepiction>,
+        #[serde(rename = "atomQueries")]
+        atom_queries: Vec<CtfileAtomQueryDepiction>,
+        #[serde(rename = "bondQueries")]
+        bond_queries: Vec<CtfileBondQueryDepiction>,
+        #[serde(rename = "atomAnnotations")]
+        atom_annotations: Vec<CtfileAtomAnnotationDepiction>,
+        #[serde(rename = "variableAttachments")]
+        variable_attachments: Vec<CtfileVariableAttachmentDepiction>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -62,6 +77,83 @@ pub struct AtomLabel {
     pub radical: Option<u8>,
     #[serde(rename = "atomMap", skip_serializing_if = "Option::is_none")]
     pub atom_map: Option<u32>,
+    #[serde(rename = "rgroupLabel", skip_serializing_if = "Option::is_none")]
+    pub rgroup_label: Option<u8>,
+    #[serde(rename = "querySymbol", default)]
+    pub query_symbol: bool,
+    #[serde(rename = "queryNegated", default)]
+    pub query_negated: bool,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfilePoint {
+    pub atom_index: usize,
+    pub offset: [f64; 2],
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfileSGroupDepiction {
+    pub id: u32,
+    pub kind: String,
+    pub left_top: CtfilePoint,
+    pub left_bottom: CtfilePoint,
+    pub right_top: CtfilePoint,
+    pub right_bottom: CtfilePoint,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfileHighlightBond {
+    pub bond_index: usize,
+    pub atom1_index: usize,
+    pub atom2_index: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfileHighlightDepiction {
+    pub atom_indexes: Vec<usize>,
+    pub bonds: Vec<CtfileHighlightBond>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfileBondQueryDepiction {
+    pub bond_index: usize,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfileAtomQueryDepiction {
+    pub atom_index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    pub label: String,
+    pub compact_label: String,
+    pub constraint_lines: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfileAtomAnnotationDepiction {
+    pub atom_index: usize,
+    pub kind: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CtfileVariableAttachmentDepiction {
+    pub bond_index: usize,
+    pub endpoint_atom_indexes: Vec<usize>,
+    pub mode: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -131,7 +223,12 @@ struct RenderAtom {
     isotope: Option<u16>,
     radical: Option<u8>,
     atom_map: Option<u32>,
+    rgroup_label: Option<u8>,
+    query_symbol: bool,
+    query_negated: bool,
     stereo_annotation: Option<String>,
+    force_label: bool,
+    hide_label: bool,
 }
 
 #[derive(Clone)]
@@ -146,11 +243,16 @@ struct RenderMol {
     bonds: Vec<RenderBond>,
 }
 
-#[derive(Clone, Default)]
-struct SdfAtomMetadata {
-    isotope: Option<u16>,
-    radical: Option<u8>,
-    atom_map: Option<u32>,
+struct RecordRenderProjection {
+    mol: RenderMol,
+    /// Original semantic atom index to projected depiction atom index.
+    atom_indexes: Vec<usize>,
+    /// Original semantic bond index to projected depiction bond index. Internal
+    /// bonds of a contracted superatom deliberately have no projected bond.
+    bond_indexes: Vec<Option<usize>>,
+    contracted_sgroup_ids: HashSet<u32>,
+    contracted_atom_indexes: HashSet<usize>,
+    coordinates_preserved: bool,
 }
 
 #[derive(Clone, Default)]
@@ -259,6 +361,18 @@ pub fn sdf_to_ast(sdf_data: &[u8], options: &[u8]) -> Result<Vec<u8>, String> {
     sdf_record_to_ast(sdf_data, options, 1)
 }
 
+pub fn inspect_sdf_record(sdf: &str, record: usize) -> Result<ChemicalRecord, String> {
+    Ok(parse_sdf_record(sdf, record)?.chemical)
+}
+
+pub fn sdf_record_to_inspection_cbor(sdf_data: &[u8], record: usize) -> Result<Vec<u8>, String> {
+    let sdf = std::str::from_utf8(sdf_data).map_err(|error| error.to_string())?;
+    let inspection = inspect_sdf_record(sdf, record)?;
+    let mut buffer = Vec::new();
+    ciborium::into_writer(&inspection, &mut buffer).map_err(|error| error.to_string())?;
+    Ok(buffer)
+}
+
 pub fn sdf_record_to_ast(
     sdf_data: &[u8],
     options: &[u8],
@@ -271,9 +385,9 @@ pub fn sdf_record_to_ast(
 
 pub fn sdf_record_to_layout_input(sdf_data: &[u8], record: usize) -> Result<Vec<u8>, String> {
     let sdf = std::str::from_utf8(sdf_data).map_err(|error| error.to_string())?;
-    let (mol, _) = parse_sdf_record(sdf, record)?;
-    if sdf_requires_layout(&mol) {
-        Ok(encode_layout_input(&sdf_layout_graph(&mol)))
+    let parsed = parse_sdf_record(sdf, record)?;
+    if sdf_requires_layout(&parsed.molecule) {
+        Ok(encode_layout_input(&sdf_layout_graph(&parsed.molecule)))
     } else {
         Ok(Vec::new())
     }
@@ -300,10 +414,17 @@ pub fn sdf_record_to_commands(
     mode: RenderMode,
     record: usize,
 ) -> Result<Vec<Command>, String> {
-    let (mol, record_sdf) = parse_sdf_record(sdf, record)?;
-    let stereo_map = extract_sdf_stereo(&mol, record_sdf);
-    let render_mol = render_mol_from_sdf(&mol, record_sdf);
-    Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
+    let parsed = parse_sdf_record(sdf, record)?;
+    let stereo_map = extract_sdf_stereo(&parsed.molecule, parsed.raw_record);
+    let stereo_annotations = extract_sdf_stereo_annotations(parsed.raw_record, &parsed.molecule);
+    let render_mol = render_mol_from_record(&parsed.chemical, stereo_annotations);
+    let projection = project_record_render(&parsed.chemical, render_mol);
+    Ok(ast_from_chemical_record(
+        &parsed.chemical,
+        &projection,
+        mode.as_str(),
+        &stereo_map,
+    ))
 }
 
 pub fn sdf_record_to_commands_with_coords(
@@ -312,23 +433,105 @@ pub fn sdf_record_to_commands_with_coords(
     mode: RenderMode,
     record: usize,
 ) -> Result<Vec<Command>, String> {
-    let (mol, record_sdf) = parse_sdf_record(sdf, record)?;
-    let coords = decode_coords(coords_data, mol.atoms.len(), mol.bonds.len())?;
-    let stereo_map = extract_sdf_stereo(&mol, record_sdf);
-    let mut render_mol = render_mol_from_sdf(&mol, record_sdf);
+    let parsed = parse_sdf_record(sdf, record)?;
+    let coords = decode_coords(
+        coords_data,
+        parsed.molecule.atoms.len(),
+        parsed.molecule.bonds.len(),
+    )?;
+    let stereo_map = extract_sdf_stereo(&parsed.molecule, parsed.raw_record);
+    let stereo_annotations = extract_sdf_stereo_annotations(parsed.raw_record, &parsed.molecule);
+    let mut render_mol = render_mol_from_record(&parsed.chemical, stereo_annotations);
     for (atom, &(x, y)) in render_mol.atoms.iter_mut().zip(&coords.coords) {
         atom.x = f64::from(x);
         atom.y = f64::from(y);
     }
-    Ok(ast_from_render_mol(&render_mol, mode.as_str(), &stereo_map))
+    let projection = project_record_render(&parsed.chemical, render_mol);
+    Ok(ast_from_chemical_record(
+        &parsed.chemical,
+        &projection,
+        mode.as_str(),
+        &stereo_map,
+    ))
 }
 
-fn parse_sdf_record(sdf: &str, record: usize) -> Result<(sdfrust::Molecule, &str), String> {
-    let record_sdf = select_sdf_record(sdf, record)?;
-    let mol = parse_sdf_auto_string(record_sdf)
+struct ParsedSdfRecord<'a> {
+    molecule: sdfrust::Molecule,
+    raw_record: &'a str,
+    chemical: ChemicalRecord,
+}
+
+fn parse_sdf_record(sdf: &str, record: usize) -> Result<ParsedSdfRecord<'_>, String> {
+    let raw_record = select_sdf_record(sdf, record)?;
+    let parser_record = normalize_v3000_atom_lists(raw_record);
+    let molecule = parse_sdf_auto_string(&parser_record)
         .map_err(|error| format!("could not parse SDF record {record}: {error}"))?;
-    validate_sdf_molecule(&mol, record)?;
-    Ok((mol, record_sdf))
+    validate_sdf_molecule(&molecule, record)?;
+    let metadata = extract_sdf_atom_metadata(raw_record, &molecule);
+    let chemical = ChemicalRecord::from_sdf(&molecule, raw_record, record, &metadata);
+    Ok(ParsedSdfRecord {
+        molecule,
+        raw_record,
+        chemical,
+    })
+}
+
+fn normalize_v3000_atom_lists(raw_record: &str) -> String {
+    let mut output = String::with_capacity(raw_record.len());
+    let mut in_atom_block = false;
+    for line_with_ending in raw_record.split_inclusive('\n') {
+        let line = line_with_ending.trim_end_matches(['\r', '\n']);
+        let ending = &line_with_ending[line.len()..];
+        let Some(content) = line.strip_prefix("M  V30 ") else {
+            output.push_str(line_with_ending);
+            continue;
+        };
+        if content == "BEGIN ATOM" {
+            in_atom_block = true;
+            output.push_str(line_with_ending);
+            continue;
+        }
+        if content == "END ATOM" {
+            in_atom_block = false;
+            output.push_str(line_with_ending);
+            continue;
+        }
+        if !in_atom_block {
+            output.push_str(line_with_ending);
+            continue;
+        }
+
+        let Some(id_end) = content.find(char::is_whitespace) else {
+            output.push_str(line_with_ending);
+            continue;
+        };
+        let after_id = content[id_end..].trim_start();
+        let list_start = after_id
+            .strip_prefix('"')
+            .unwrap_or(after_id)
+            .strip_prefix("NOT ")
+            .unwrap_or_else(|| after_id.strip_prefix('"').unwrap_or(after_id));
+        if !list_start.starts_with('[') {
+            output.push_str(line_with_ending);
+            continue;
+        }
+        let Some(list_end) = list_start.find(']') else {
+            output.push_str(line_with_ending);
+            continue;
+        };
+        let suffix = list_start[list_end + 1..]
+            .strip_prefix('"')
+            .unwrap_or(&list_start[list_end + 1..]);
+        output.push_str("M  V30 ");
+        output.push_str(&content[..id_end]);
+        output.push_str(" L");
+        output.push_str(suffix);
+        output.push_str(ending);
+    }
+    if !raw_record.ends_with('\n') && output.ends_with('\n') {
+        output.pop();
+    }
+    output
 }
 
 fn select_sdf_record(sdf: &str, record: usize) -> Result<&str, String> {
@@ -555,49 +758,286 @@ fn commands_to_cbor(commands: &[Command]) -> Result<Vec<u8>, String> {
     Ok(buffer)
 }
 
-fn render_mol_from_sdf(mol: &sdfrust::Molecule, sdf: &str) -> RenderMol {
-    let metadata = extract_sdf_atom_metadata(sdf, mol);
-    let stereo_annotations = extract_sdf_stereo_annotations(sdf, mol);
-    let atoms = mol
+fn render_mol_from_record(
+    record: &ChemicalRecord,
+    stereo_annotations: Vec<Option<String>>,
+) -> RenderMol {
+    let mut atoms = record
         .atoms
         .iter()
-        .zip(metadata)
         .zip(stereo_annotations)
-        .map(|((atom, metadata), stereo_annotation)| RenderAtom {
+        .map(|(atom, stereo_annotation)| RenderAtom {
             element: atom.element.clone(),
-            x: atom.x,
-            y: atom.y,
+            x: atom.coordinates[0],
+            y: atom.coordinates[1],
             hydrogens: 0,
             charge: atom.formal_charge,
-            isotope: metadata.isotope,
-            radical: atom.radical.or(metadata.radical),
-            atom_map: atom.atom_atom_mapping.or(metadata.atom_map),
+            isotope: atom.isotope,
+            radical: atom.radical,
+            atom_map: atom.atom_map,
+            rgroup_label: None,
+            query_symbol: false,
+            query_negated: false,
             stereo_annotation,
+            force_label: false,
+            hide_label: false,
         })
-        .collect();
+        .collect::<Vec<_>>();
 
-    let bonds = mol
+    for atom in &record.atoms {
+        let mut label = atom.element.clone();
+        if let Some(query) = &atom.query {
+            if let Some(symbol) = atom_query_glyph_symbol(query) {
+                label = symbol;
+                atoms[atom.index].query_symbol = true;
+                atoms[atom.index].query_negated = query.is_not_list;
+            } else if matches!(atom.element.as_str(), "A" | "Q" | "*") {
+                label = atom.element.clone();
+            }
+        }
+        if label == "R#" {
+            if let Some(rgroup) = atom.rgroup_labels.first().or(atom.rgroup_label.as_ref()) {
+                label = "R".to_string();
+                atoms[atom.index].rgroup_label = Some(*rgroup);
+            }
+        }
+        atoms[atom.index].element = label;
+        atoms[atom.index].force_label =
+            atom.query.is_some() || atom.element == "R#" || !atom.rgroup_labels.is_empty();
+        atoms[atom.index].hide_label = false;
+    }
+
+    for group in &record.sgroups {
+        if group.kind == "superatom" && group.atom_source_ids.len() == 1 {
+            let Some(label) = group.label.as_ref().or(group.subscript.as_ref()) else {
+                continue;
+            };
+            let source_id = group.atom_source_ids[0];
+            if let Some(atom) = record.atoms.iter().find(|atom| atom.source_id == source_id) {
+                atoms[atom.index].element = typographic_superatom_label(label);
+                atoms[atom.index].force_label = true;
+            }
+        }
+    }
+
+    let bonds = record
         .bonds
         .iter()
         .map(|bond| RenderBond {
-            atom1: bond.atom1,
-            atom2: bond.atom2,
+            atom1: bond.atom1_index,
+            atom2: bond.atom2_index,
             kind: match bond.order {
-                BondOrder::Single => BondKind::Single,
-                BondOrder::Double => BondKind::Double,
-                BondOrder::Triple => BondKind::Triple,
-                BondOrder::Aromatic => BondKind::Aromatic,
-                BondOrder::SingleOrDouble => BondKind::SingleOrDouble,
-                BondOrder::SingleOrAromatic => BondKind::SingleOrAromatic,
-                BondOrder::DoubleOrAromatic => BondKind::DoubleOrAromatic,
-                BondOrder::Any => BondKind::Any,
-                BondOrder::Coordination => BondKind::Coordination,
-                BondOrder::Hydrogen => BondKind::Hydrogen,
+                ChemicalBondOrder::Single => BondKind::Single,
+                ChemicalBondOrder::Double => BondKind::Double,
+                ChemicalBondOrder::Triple => BondKind::Triple,
+                ChemicalBondOrder::Aromatic => BondKind::Aromatic,
+                ChemicalBondOrder::SingleOrDouble => BondKind::SingleOrDouble,
+                ChemicalBondOrder::SingleOrAromatic => BondKind::SingleOrAromatic,
+                ChemicalBondOrder::DoubleOrAromatic => BondKind::DoubleOrAromatic,
+                ChemicalBondOrder::Any => BondKind::Any,
+                ChemicalBondOrder::Coordination => BondKind::Coordination,
+                ChemicalBondOrder::Hydrogen => BondKind::Hydrogen,
             },
         })
         .collect();
 
     RenderMol { atoms, bonds }
+}
+
+fn project_record_render(record: &ChemicalRecord, mol: RenderMol) -> RecordRenderProjection {
+    let coordinates_preserved = record.atoms.iter().all(|atom| {
+        mol.atoms.get(atom.index).is_some_and(|rendered| {
+            (rendered.x - atom.coordinates[0]).abs() <= 1e-8
+                && (rendered.y - atom.coordinates[1]).abs() <= 1e-8
+        })
+    });
+    let source_atom_indexes = record
+        .atoms
+        .iter()
+        .map(|atom| (atom.source_id, atom.index))
+        .collect::<HashMap<_, _>>();
+    let contractible_groups = contractible_superatom_indexes(&record.sgroups);
+    let mut atom_group_indexes = vec![None; record.atoms.len()];
+    for &group_index in &contractible_groups {
+        for source_id in &record.sgroups[group_index].atom_source_ids {
+            if let Some(&atom_index) = source_atom_indexes.get(source_id) {
+                atom_group_indexes[atom_index] = Some(group_index);
+            }
+        }
+    }
+
+    let mut atoms = Vec::with_capacity(record.atoms.len());
+    let mut atom_indexes = vec![usize::MAX; record.atoms.len()];
+    let mut emitted_groups = HashSet::new();
+    let mut contracted_atom_indexes = HashSet::new();
+    let mut contracted_sgroup_ids = HashSet::new();
+
+    for original_index in 0..record.atoms.len() {
+        let Some(group_index) = atom_group_indexes[original_index] else {
+            atom_indexes[original_index] = atoms.len();
+            atoms.push(mol.atoms[original_index].clone());
+            continue;
+        };
+        if !emitted_groups.insert(group_index) {
+            continue;
+        }
+
+        let group = &record.sgroups[group_index];
+        let member_indexes = group
+            .atom_source_ids
+            .iter()
+            .filter_map(|source_id| source_atom_indexes.get(source_id).copied())
+            .collect::<HashSet<_>>();
+        let projected_index = atoms.len();
+        for &member_index in &member_indexes {
+            atom_indexes[member_index] = projected_index;
+            contracted_atom_indexes.insert(member_index);
+        }
+
+        let (x, y) = superatom_position(record, &mol, group, &member_indexes);
+        let label = group
+            .label
+            .as_ref()
+            .or(group.subscript.as_ref())
+            .expect("contractible superatoms have labels");
+        atoms.push(RenderAtom {
+            element: typographic_superatom_label(label),
+            x,
+            y,
+            hydrogens: 0,
+            charge: 0,
+            isotope: None,
+            radical: None,
+            atom_map: None,
+            rgroup_label: None,
+            query_symbol: false,
+            query_negated: false,
+            stereo_annotation: None,
+            force_label: true,
+            hide_label: false,
+        });
+        contracted_sgroup_ids.insert(group.id);
+    }
+
+    debug_assert!(atom_indexes.iter().all(|&index| index != usize::MAX));
+    let mut bonds = Vec::with_capacity(record.bonds.len());
+    let mut bond_indexes = vec![None; record.bonds.len()];
+    for bond in &record.bonds {
+        let atom1 = atom_indexes[bond.atom1_index];
+        let atom2 = atom_indexes[bond.atom2_index];
+        if atom1 == atom2 {
+            continue;
+        }
+        bond_indexes[bond.index] = Some(bonds.len());
+        bonds.push(RenderBond {
+            atom1,
+            atom2,
+            kind: mol.bonds[bond.index].kind,
+        });
+    }
+
+    RecordRenderProjection {
+        mol: RenderMol { atoms, bonds },
+        atom_indexes,
+        bond_indexes,
+        contracted_sgroup_ids,
+        contracted_atom_indexes,
+        coordinates_preserved,
+    }
+}
+
+fn superatom_position(
+    record: &ChemicalRecord,
+    mol: &RenderMol,
+    group: &crate::ChemicalSGroup,
+    member_indexes: &HashSet<usize>,
+) -> (f64, f64) {
+    let source_atom_indexes = record
+        .atoms
+        .iter()
+        .map(|atom| (atom.source_id, atom.index))
+        .collect::<HashMap<_, _>>();
+    let explicit_attachment_indexes = group
+        .attachment_points
+        .iter()
+        .filter_map(|point| source_atom_indexes.get(&point.atom_source_id).copied())
+        .filter(|index| member_indexes.contains(index))
+        .collect::<HashSet<_>>();
+    let mut boundary_indexes = Vec::new();
+    let mut seen = HashSet::new();
+    for bond in &record.bonds {
+        let atom1_inside = member_indexes.contains(&bond.atom1_index);
+        let atom2_inside = member_indexes.contains(&bond.atom2_index);
+        if atom1_inside == atom2_inside {
+            continue;
+        }
+        let inside_index = if atom1_inside {
+            bond.atom1_index
+        } else {
+            bond.atom2_index
+        };
+        if seen.insert(inside_index) {
+            boundary_indexes.push(inside_index);
+        }
+    }
+    let position_indexes = if !explicit_attachment_indexes.is_empty() {
+        explicit_attachment_indexes.into_iter().collect::<Vec<_>>()
+    } else if boundary_indexes.is_empty() {
+        member_indexes.iter().copied().collect::<Vec<_>>()
+    } else {
+        boundary_indexes
+    };
+    let count = position_indexes.len() as f64;
+    let x = position_indexes
+        .iter()
+        .map(|&index| mol.atoms[index].x)
+        .sum::<f64>()
+        / count;
+    let y = position_indexes
+        .iter()
+        .map(|&index| mol.atoms[index].y)
+        .sum::<f64>()
+        / count;
+    (x, y)
+}
+
+fn typographic_superatom_label(label: &str) -> String {
+    let mut output = String::with_capacity(label.len());
+    let mut previous_is_letter = false;
+    let mut in_subscript_run = false;
+    for character in label.chars() {
+        let should_subscript =
+            character.is_ascii_digit() && (previous_is_letter || in_subscript_run);
+        let rendered = if should_subscript {
+            match character {
+                '0' => '₀',
+                '1' => '₁',
+                '2' => '₂',
+                '3' => '₃',
+                '4' => '₄',
+                '5' => '₅',
+                '6' => '₆',
+                '7' => '₇',
+                '8' => '₈',
+                '9' => '₉',
+                _ => character,
+            }
+        } else {
+            character
+        };
+        output.push(rendered);
+        in_subscript_run = should_subscript;
+        previous_is_letter = character.is_alphabetic();
+    }
+    output
+}
+
+fn query_count(value: i8) -> String {
+    match value {
+        -2 => "*".to_string(),
+        -1 => "0".to_string(),
+        value => value.to_string(),
+    }
 }
 
 fn extract_sdf_stereo_annotations(sdf: &str, mol: &sdfrust::Molecule) -> Vec<Option<String>> {
@@ -883,9 +1323,14 @@ fn render_mol_from_smiles(
             isotope: atom.isotope,
             radical: None,
             atom_map: atom.atom_map,
+            rgroup_label: None,
+            query_symbol: false,
+            query_negated: false,
             stereo_annotation: (!depicted_centers.contains(&atom_idx))
                 .then(|| atom.stereo_annotation.clone())
                 .flatten(),
+            force_label: false,
+            hide_label: false,
         })
         .collect::<Vec<_>>();
 
@@ -1869,6 +2314,442 @@ fn has_bond_kind(graph: &SmilesGraph, atom1: usize, atom2: usize, kind: SmilesBo
     })
 }
 
+fn ast_from_chemical_record(
+    record: &ChemicalRecord,
+    projection: &RecordRenderProjection,
+    mode_str: &str,
+    stereo_map: &HashMap<(usize, usize), (u8, bool)>,
+) -> Vec<Command> {
+    let stereo_map = project_stereo_map(stereo_map, projection);
+    let mut commands = ast_from_render_mol(&projection.mol, mode_str, &stereo_map);
+    let depictions = ctfile_depictions(record, projection);
+    if !depictions.sgroups.is_empty()
+        || !depictions.highlights.is_empty()
+        || !depictions.atom_queries.is_empty()
+        || !depictions.bond_queries.is_empty()
+        || !depictions.atom_annotations.is_empty()
+        || !depictions.variable_attachments.is_empty()
+    {
+        commands.push(Command::Ctfile {
+            sgroups: depictions.sgroups,
+            highlights: depictions.highlights,
+            atom_queries: depictions.atom_queries,
+            bond_queries: depictions.bond_queries,
+            atom_annotations: depictions.atom_annotations,
+            variable_attachments: depictions.variable_attachments,
+        });
+    }
+    commands
+}
+
+fn project_stereo_map(
+    stereo_map: &HashMap<(usize, usize), (u8, bool)>,
+    projection: &RecordRenderProjection,
+) -> HashMap<(usize, usize), (u8, bool)> {
+    stereo_map
+        .iter()
+        .filter_map(|(&(atom1, atom2), &stereo)| {
+            let atom1 = *projection.atom_indexes.get(atom1)?;
+            let atom2 = *projection.atom_indexes.get(atom2)?;
+            (atom1 != atom2).then_some(((atom1, atom2), stereo))
+        })
+        .collect()
+}
+
+struct CtfileDepictions {
+    sgroups: Vec<CtfileSGroupDepiction>,
+    highlights: Vec<CtfileHighlightDepiction>,
+    atom_queries: Vec<CtfileAtomQueryDepiction>,
+    bond_queries: Vec<CtfileBondQueryDepiction>,
+    atom_annotations: Vec<CtfileAtomAnnotationDepiction>,
+    variable_attachments: Vec<CtfileVariableAttachmentDepiction>,
+}
+
+fn ctfile_depictions(
+    record: &ChemicalRecord,
+    projection: &RecordRenderProjection,
+) -> CtfileDepictions {
+    let mol = &projection.mol;
+    let atom_indexes = record
+        .atoms
+        .iter()
+        .map(|atom| (atom.source_id, projection.atom_indexes[atom.index]))
+        .collect::<HashMap<_, _>>();
+    let bond_indexes = record
+        .bonds
+        .iter()
+        .filter_map(|bond| projection.bond_indexes[bond.index].map(|index| (bond.source_id, index)))
+        .collect::<HashMap<_, _>>();
+    let average_length = render_average_bond_length(mol);
+
+    let sgroups = record
+        .sgroups
+        .iter()
+        .filter(|group| group.kind != "unknown")
+        .filter(|group| !(group.kind == "superatom" && group.atom_source_ids.len() == 1))
+        .filter(|group| !projection.contracted_sgroup_ids.contains(&group.id))
+        .filter_map(|group| {
+            let mut seen = HashSet::new();
+            let indexes = group
+                .atom_source_ids
+                .iter()
+                .filter_map(|id| atom_indexes.get(id).copied())
+                .filter(|index| seen.insert(*index))
+                .collect::<Vec<_>>();
+            if indexes.is_empty() {
+                return None;
+            }
+
+            let (left, right) = if projection.coordinates_preserved && group.brackets.len() >= 2 {
+                let mut brackets = group.brackets.clone();
+                brackets.sort_by(|left, right| {
+                    ((left[0] + left[2]) / 2.0).total_cmp(&((right[0] + right[2]) / 2.0))
+                });
+                (brackets[0], *brackets.last().expect("two brackets exist"))
+            } else {
+                let min_x = indexes
+                    .iter()
+                    .map(|&index| mol.atoms[index].x)
+                    .fold(f64::INFINITY, f64::min);
+                let max_x = indexes
+                    .iter()
+                    .map(|&index| mol.atoms[index].x)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let min_y = indexes
+                    .iter()
+                    .map(|&index| mol.atoms[index].y)
+                    .fold(f64::INFINITY, f64::min);
+                let max_y = indexes
+                    .iter()
+                    .map(|&index| mol.atoms[index].y)
+                    .fold(f64::NEG_INFINITY, f64::max);
+                let padding = average_length * 0.35;
+                (
+                    [
+                        min_x - padding,
+                        max_y + padding,
+                        min_x - padding,
+                        min_y - padding,
+                    ],
+                    [
+                        max_x + padding,
+                        max_y + padding,
+                        max_x + padding,
+                        min_y - padding,
+                    ],
+                )
+            };
+            let label = sgroup_depiction_label(group);
+            Some(CtfileSGroupDepiction {
+                id: group.id,
+                kind: group.kind.clone(),
+                left_top: ctfile_point(left[0], left[1], &indexes, mol, average_length),
+                left_bottom: ctfile_point(left[2], left[3], &indexes, mol, average_length),
+                right_top: ctfile_point(right[0], right[1], &indexes, mol, average_length),
+                right_bottom: ctfile_point(right[2], right[3], &indexes, mol, average_length),
+                label,
+            })
+        })
+        .collect();
+
+    let highlights = record
+        .collections
+        .iter()
+        .filter(|collection| collection.kind == "highlight")
+        .map(|collection| {
+            let mut seen_atoms = HashSet::new();
+            let mut highlighted_atoms = collection
+                .atom_source_ids
+                .iter()
+                .filter_map(|id| atom_indexes.get(id).copied())
+                .filter(|index| seen_atoms.insert(*index))
+                .collect::<Vec<_>>();
+            let source_bond_indexes = record
+                .bonds
+                .iter()
+                .map(|bond| (bond.source_id, bond.index))
+                .collect::<HashMap<_, _>>();
+            let mut bonds = Vec::new();
+            for source_id in &collection.bond_source_ids {
+                let Some(&source_bond_index) = source_bond_indexes.get(source_id) else {
+                    continue;
+                };
+                if let Some(&bond_index) = bond_indexes.get(source_id) {
+                    let bond = &mol.bonds[bond_index];
+                    bonds.push(CtfileHighlightBond {
+                        bond_index,
+                        atom1_index: bond.atom1,
+                        atom2_index: bond.atom2,
+                    });
+                } else {
+                    let source_bond = &record.bonds[source_bond_index];
+                    let atom1_index = projection.atom_indexes[source_bond.atom1_index];
+                    let atom2_index = projection.atom_indexes[source_bond.atom2_index];
+                    if atom1_index == atom2_index && seen_atoms.insert(atom1_index) {
+                        highlighted_atoms.push(atom1_index);
+                    }
+                }
+            }
+            CtfileHighlightDepiction {
+                atom_indexes: highlighted_atoms,
+                bonds,
+            }
+        })
+        .filter(|highlight| !highlight.atom_indexes.is_empty() || !highlight.bonds.is_empty())
+        .collect();
+
+    let bond_queries = record
+        .bonds
+        .iter()
+        .filter_map(|bond| {
+            let bond_index = projection.bond_indexes[bond.index]?;
+            bond.topology.map(|topology| CtfileBondQueryDepiction {
+                bond_index,
+                label: match topology {
+                    1 => "rn",
+                    2 => "ch",
+                    _ => "rn/ch",
+                }
+                .to_string(),
+            })
+        })
+        .collect();
+
+    let atom_annotations = record
+        .link_nodes
+        .iter()
+        .filter(|node| node.min_repeat == 1 && link_node_atoms_are_renderable(node, &atom_indexes))
+        .filter_map(|node| {
+            let source_id = node.connections.first()?.atom_source_id;
+            let atom_index = *atom_indexes.get(&source_id)?;
+            Some(CtfileAtomAnnotationDepiction {
+                atom_index,
+                kind: "link-node".to_string(),
+                label: if node.min_repeat == node.max_repeat {
+                    node.min_repeat.to_string()
+                } else {
+                    format!("{}–{}", node.min_repeat, node.max_repeat)
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let variable_attachments = record
+        .bonds
+        .iter()
+        .filter(|bond| {
+            bond.endpoint_source_ids.len() >= 2
+                && matches!(bond.attachment_mode.as_deref(), Some("ALL" | "ANY"))
+                && bond
+                    .endpoint_source_ids
+                    .iter()
+                    .all(|source_id| atom_indexes.contains_key(source_id))
+        })
+        .filter_map(|bond| {
+            let bond_index = projection.bond_indexes[bond.index]?;
+            let mut seen = HashSet::new();
+            let endpoint_atom_indexes = bond
+                .endpoint_source_ids
+                .iter()
+                .filter_map(|source_id| atom_indexes.get(source_id).copied())
+                .filter(|index| seen.insert(*index))
+                .collect::<Vec<_>>();
+            (!endpoint_atom_indexes.is_empty()).then_some(CtfileVariableAttachmentDepiction {
+                bond_index,
+                endpoint_atom_indexes,
+                mode: bond
+                    .attachment_mode
+                    .clone()
+                    .expect("validated attachment mode"),
+            })
+        })
+        .collect();
+
+    let atom_queries = record
+        .atoms
+        .iter()
+        .filter(|atom| !projection.contracted_atom_indexes.contains(&atom.index))
+        .filter_map(|atom| {
+            let query = atom.query.as_ref()?;
+            let label = atom_query_constraint_label(query);
+            let compact_label = atom_query_compact_label(query);
+            let constraint_lines = atom_query_constraint_lines(query);
+            let symbol = atom_query_symbol(query);
+            (symbol.is_some() || !label.is_empty()).then_some(CtfileAtomQueryDepiction {
+                atom_index: projection.atom_indexes[atom.index],
+                symbol,
+                label,
+                compact_label,
+                constraint_lines,
+            })
+        })
+        .collect();
+
+    CtfileDepictions {
+        sgroups,
+        highlights,
+        atom_queries,
+        bond_queries,
+        atom_annotations,
+        variable_attachments,
+    }
+}
+
+fn link_node_atoms_are_renderable(
+    node: &crate::ChemicalLinkNode,
+    atom_indexes: &HashMap<u32, usize>,
+) -> bool {
+    node.max_repeat > 0
+        && !node.connections.is_empty()
+        && node.connections.iter().all(|connection| {
+            atom_indexes.contains_key(&connection.atom_source_id)
+                && atom_indexes.contains_key(&connection.neighbor_source_id)
+        })
+}
+
+fn atom_query_constraint_label(query: &crate::ChemicalAtomQuery) -> String {
+    atom_query_constraint_terms(query).join(" · ")
+}
+
+fn atom_query_compact_label(query: &crate::ChemicalAtomQuery) -> String {
+    let mut constraints = Vec::new();
+    if let Some(value) = query.hydrogen_count {
+        constraints.push(format!("(H{})", query_count(value)));
+    }
+    if let Some(value) = query.substitution_count {
+        constraints.push(format!("(s{})", query_count(value)));
+    }
+    if query.unsaturated == Some(true) {
+        constraints.push("(u)".to_string());
+    }
+    if let Some(value) = query.ring_bond_count {
+        constraints.push(format!("(r{})", query_count(value)));
+    }
+    if let Some(value) = query.valence {
+        constraints.push(format!("(v{})", query_count(value)));
+    }
+    constraints.join(" ")
+}
+
+fn atom_query_constraint_lines(query: &crate::ChemicalAtomQuery) -> Vec<String> {
+    atom_query_constraint_terms(query)
+        .chunks(2)
+        .map(|line| line.join(" · "))
+        .collect()
+}
+
+fn atom_query_constraint_terms(query: &crate::ChemicalAtomQuery) -> Vec<String> {
+    let mut constraints = Vec::new();
+    if let Some(value) = query.hydrogen_count {
+        constraints.push(match value {
+            0 | -1 => "no implicit H".to_string(),
+            value if value > 0 => format!("implicit H >= {value}"),
+            value => format!("implicit H: {}", query_count(value)),
+        });
+    }
+    if let Some(value) = query.substitution_count {
+        constraints.push(format!(
+            "substitution count: {}",
+            query_count_description(value)
+        ));
+    }
+    if query.unsaturated == Some(true) {
+        constraints.push("unsaturated".to_string());
+    }
+    if let Some(value) = query.ring_bond_count {
+        constraints.push(format!(
+            "ring-bond count: {}",
+            query_count_description(value)
+        ));
+    }
+    if let Some(value) = query.valence {
+        constraints.push(format!("valence: {}", query_count(value)));
+    }
+    constraints
+}
+
+fn query_count_description(value: i8) -> String {
+    match value {
+        -2 => "as drawn".to_string(),
+        -1 => "0".to_string(),
+        value => value.to_string(),
+    }
+}
+
+fn atom_query_symbol(query: &crate::ChemicalAtomQuery) -> Option<String> {
+    query.elements.as_ref().map(|elements| {
+        format!(
+            "{}[{}]",
+            if query.is_not_list { "NOT " } else { "" },
+            elements.join(",")
+        )
+    })
+}
+
+fn atom_query_glyph_symbol(query: &crate::ChemicalAtomQuery) -> Option<String> {
+    query
+        .elements
+        .as_ref()
+        .map(|elements| format!("[{}]", elements.join(",")))
+}
+
+fn render_average_bond_length(mol: &RenderMol) -> f64 {
+    let mut lengths = mol
+        .bonds
+        .iter()
+        .filter(|bond| bond.kind.contributes_to_average_length())
+        .filter_map(|bond| {
+            let atom1 = mol.atoms.get(bond.atom1)?;
+            let atom2 = mol.atoms.get(bond.atom2)?;
+            let length = (atom2.x - atom1.x).hypot(atom2.y - atom1.y);
+            (length.is_finite() && length > f64::EPSILON).then_some(length)
+        })
+        .collect::<Vec<_>>();
+    median(&mut lengths).unwrap_or(1.0)
+}
+
+fn ctfile_point(
+    x: f64,
+    y: f64,
+    atom_indexes: &[usize],
+    mol: &RenderMol,
+    average_length: f64,
+) -> CtfilePoint {
+    let atom_index = atom_indexes
+        .iter()
+        .copied()
+        .min_by(|&left, &right| {
+            let left_distance = (mol.atoms[left].x - x).hypot(mol.atoms[left].y - y);
+            let right_distance = (mol.atoms[right].x - x).hypot(mol.atoms[right].y - y);
+            left_distance.total_cmp(&right_distance)
+        })
+        .unwrap_or(0);
+    CtfilePoint {
+        atom_index,
+        offset: [
+            (x - mol.atoms[atom_index].x) / average_length,
+            (y - mol.atoms[atom_index].y) / average_length,
+        ],
+    }
+}
+
+fn sgroup_depiction_label(group: &crate::ChemicalSGroup) -> Option<String> {
+    if group.kind == "data" {
+        let value = group
+            .field_values
+            .first()
+            .or(group.field_value.as_ref())
+            .cloned();
+        return match (&group.field_name, value) {
+            (Some(name), Some(value)) => Some(format!("{name}: {value}")),
+            (None, Some(value)) => Some(value),
+            (Some(name), None) => Some(name.clone()),
+            (None, None) => group.label.clone(),
+        };
+    }
+    group.label.clone().or_else(|| group.subscript.clone())
+}
+
 fn insert_stereo_edge(
     stereo_map: &mut HashMap<(usize, usize), (u8, bool)>,
     from: usize,
@@ -2060,10 +2941,12 @@ fn connected_components(adj: &[Vec<(usize, BondKind, usize)>]) -> Vec<Vec<usize>
 }
 
 fn has_visible_atom_metadata(atom: &RenderAtom) -> bool {
-    atom.element == "*"
+    atom.force_label
+        || atom.element == "*"
         || atom.isotope.is_some()
         || atom.radical.is_some()
         || atom.atom_map.is_some()
+        || atom.rgroup_label.is_some()
 }
 
 fn render_label(atom: &RenderAtom, hydrogen_count: u8) -> RenderLabel {
@@ -2076,6 +2959,10 @@ fn render_label(atom: &RenderAtom, hydrogen_count: u8) -> RenderLabel {
             isotope: atom.isotope,
             radical: atom.radical,
             atom_map: atom.atom_map,
+            rgroup_label: atom.rgroup_label,
+            query_symbol: atom.query_symbol,
+            query_negated: atom.query_negated,
+            hidden: atom.hide_label,
         });
 
     RenderLabel {
@@ -2656,7 +3543,7 @@ mod tests {
         commands.iter().any(|command| match command {
             Command::Fragment { element, .. } => element == expected,
             Command::Branch { body } => contains_fragment(body, expected),
-            Command::Bond { .. } | Command::ComponentBreak => false,
+            Command::Bond { .. } | Command::ComponentBreak | Command::Ctfile { .. } => false,
         })
     }
 
@@ -2679,7 +3566,7 @@ mod tests {
                     ..
                 } => output.push((bond_type.clone(), *length_scale, offset.clone())),
                 Command::Branch { body } => collect_bonds(body, output),
-                Command::ComponentBreak => {}
+                Command::ComponentBreak | Command::Ctfile { .. } => {}
             }
         }
     }
@@ -2934,6 +3821,584 @@ mod tests {
 
         assert_eq!(carbon.0, "C");
         assert_eq!(carbon.2.as_deref(), Some("CFG=1; OR7"));
+    }
+
+    #[test]
+    fn sdf_inspection_preserves_source_ids_properties_and_unsupported_features() {
+        let sdf = concat!(
+            "foundation\n",
+            "  molchemist\n",
+            "semantic record\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 2 1 1 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 C 0.0000 0.0000 0.0000 7 MASS=13\n",
+            "M  V30 20 O 1.5000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 7 1 10 20 TOPO=1 RXCTR=1\n",
+            "M  V30 END BOND\n",
+            "M  V30 BEGIN SGROUP\n",
+            "M  V30 3 SUP ATOMS=(1 10) LABEL=\"Me\"\n",
+            "M  V30 END SGROUP\n",
+            "M  V30 BEGIN COLLECTION\n",
+            "M  V30 MDLV30/HILITE ATOMS=(2 10 20) BONDS=(1 7)\n",
+            "M  V30 END COLLECTION\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+            "> <NAME>\nfirst\nline two\n\n",
+            "> <NAME>\nsecond\n\n",
+            "$$$$\n",
+        );
+
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert_eq!(record.schema_version, 1);
+        assert_eq!(record.name, "foundation");
+        assert_eq!(record.atoms[0].source_id, 10);
+        assert_eq!(record.atoms[0].atom_map, Some(7));
+        assert_eq!(record.atoms[0].isotope, Some(13));
+        assert_eq!(record.bonds[0].source_id, 7);
+        assert_eq!(record.bonds[0].atom1_source_id, 10);
+        assert_eq!(record.bonds[0].atom2_source_id, 20);
+        assert_eq!(record.sgroups[0].atom_source_ids, vec![10]);
+        assert_eq!(record.collections[0].kind, "highlight");
+        assert_eq!(record.collections[0].atom_source_ids, vec![10, 20]);
+        assert_eq!(record.collections[0].bond_source_ids, vec![7]);
+        assert_eq!(record.properties.len(), 2);
+        assert_eq!(record.properties[0].value, "first\nline two");
+        assert_eq!(record.properties[1].name, "NAME");
+        assert_eq!(record.properties[1].value, "second");
+        assert_eq!(
+            record
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["reaction-center-not-depicted",]
+        );
+        assert!(record.raw_record.starts_with("foundation\n"));
+        assert!(!record.raw_record.contains("$$$$"));
+    }
+
+    #[test]
+    fn ctfile_queries_sgroups_and_highlights_reach_the_depiction_ast() {
+        let sdf = concat!(
+            "ctfile depiction\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 4 2 1 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 \"NOT [C,N]\" 0.0000 0.0000 0.0000 0 HCOUNT=1 SUBST=3 UNSAT=1 RBCNT=2\n",
+            "M  V30 20 R# 1.5000 0.0000 0.0000 0 RGROUPS=(1 7)\n",
+            "M  V30 30 C 3.0000 0.0000 0.0000 0\n",
+            "M  V30 40 C 4.5000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 5 1 10 20 TOPO=1\n",
+            "M  V30 6 1 30 40\n",
+            "M  V30 END BOND\n",
+            "M  V30 BEGIN SGROUP\n",
+            "M  V30 3 SRU 0 ATOMS=(2 30 40) LABEL=n BRKXYZ=(9 2.6 0.5 0 2.6 -0.5 0 0 0 0) BRKXYZ=(9 4.9 0.5 0 4.9 -0.5 0 0 0 0)\n",
+            "M  V30 END SGROUP\n",
+            "M  V30 BEGIN COLLECTION\n",
+            "M  V30 MDLV30/HILITE ATOMS=(2 10 20) BONDS=(1 5)\n",
+            "M  V30 END COLLECTION\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        let query = record.atoms[0].query.as_ref().unwrap();
+        assert_eq!(
+            query.elements.as_deref(),
+            Some(&["C".to_string(), "N".to_string()][..])
+        );
+        assert_eq!(query.hydrogen_count, Some(1));
+        assert!(query.is_not_list);
+        assert_eq!(query.substitution_count, Some(3));
+        assert_eq!(query.unsaturated, Some(true));
+        assert_eq!(query.ring_bond_count, Some(2));
+        assert_eq!(record.atoms[1].rgroup_labels, vec![7]);
+        assert_eq!(record.sgroups[0].brackets.len(), 2);
+        assert!(record.diagnostics.is_empty());
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Fragment {
+                element,
+                name,
+                atom: Some(atom),
+                ..
+            } if element == "[C,N]"
+                && name == "a0"
+                && atom.query_symbol
+                && atom.query_negated
+        )));
+        let rgroup_label = commands.iter().find_map(|command| match command {
+            Command::Fragment {
+                atom: Some(atom), ..
+            } if atom.symbol == "R" && atom.rgroup_label == Some(7) => Some(atom.symbol.as_str()),
+            _ => None,
+        });
+        assert_eq!(rgroup_label, Some("R"));
+        match commands.last().unwrap() {
+            Command::Ctfile {
+                sgroups,
+                highlights,
+                atom_queries,
+                bond_queries,
+                ..
+            } => {
+                assert_eq!(sgroups.len(), 1);
+                assert_eq!(sgroups[0].label.as_deref(), Some("n"));
+                assert_eq!(highlights[0].atom_indexes, vec![0, 1]);
+                assert_eq!(highlights[0].bonds[0].bond_index, 0);
+                assert_eq!(atom_queries[0].symbol.as_deref(), Some("NOT [C,N]"));
+                assert_eq!(
+                    atom_queries[0].label,
+                    "implicit H >= 1 · substitution count: 3 · unsaturated · ring-bond count: 2"
+                );
+                assert_eq!(atom_queries[0].compact_label, "(H1) (s3) (u) (r2)");
+                assert_eq!(
+                    atom_queries[0].constraint_lines,
+                    [
+                        "implicit H >= 1 · substitution count: 3",
+                        "unsaturated · ring-bond count: 2",
+                    ]
+                );
+                assert_eq!(bond_queries[0].label, "rn");
+            }
+            command => panic!("expected CTfile overlay, got {command:?}"),
+        }
+    }
+
+    #[test]
+    fn real_v2000_link_node_and_sap_metadata_are_normalized_and_depicted() {
+        let link = include_str!("../../molchemist-cli/tests/fixtures/rdkit/Sgroups_Link_01.mol");
+        let record = inspect_sdf_record(link, 1).unwrap();
+        assert_eq!(record.link_nodes.len(), 1);
+        assert_eq!(record.link_nodes[0].min_repeat, 1);
+        assert_eq!(record.link_nodes[0].max_repeat, 3);
+        assert_eq!(record.link_nodes[0].connections.len(), 2);
+        assert!(record.diagnostics.is_empty());
+        let commands = sdf_to_commands(link, RenderMode::Skeletal).unwrap();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Ctfile { atom_annotations, .. }
+                if atom_annotations.iter().any(|annotation|
+                    annotation.kind == "link-node" && annotation.label == "1–3")
+        )));
+
+        let sap = include_str!("../../molchemist-cli/tests/fixtures/rdkit/sgroup_ap_bug.mol");
+        let record = inspect_sdf_record(sap, 1).unwrap();
+        assert_eq!(record.sgroups[0].attachment_points[0].atom_source_id, 1);
+        assert_eq!(
+            record.sgroups[0].attachment_points[0].leaving_atom_source_id,
+            Some(5)
+        );
+        assert_eq!(record.sgroups[2].attachment_points.len(), 2);
+        assert_eq!(record.sgroups[2].attachment_points[0].id, "Al");
+        assert_eq!(record.sgroups[2].attachment_points[1].id, "Br");
+        assert!(record.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn v3000_attachment_points_variable_bonds_and_link_nodes_reach_the_ast() {
+        let sdf = concat!(
+            "attachments\n  molchemist\n\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 4 3 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 C 0 0 0 0 ATTCHPT=-1\n",
+            "M  V30 20 C 1.5 0 0 0\n",
+            "M  V30 30 C 2.25 1.25 0 0\n",
+            "M  V30 40 C 2.25 -1.25 0 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 7 1 10 20 ENDPTS=(3 20 30 40) ATTACH=ANY\n",
+            "M  V30 8 1 20 30\n",
+            "M  V30 9 1 20 40\n",
+            "M  V30 END BOND\n",
+            "M  V30 LINKNODE 1 4 2 20 30 20 40\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert_eq!(record.atoms[0].attachment_points, vec![-1]);
+        assert_eq!(record.bonds[0].endpoint_source_ids, vec![20, 30, 40]);
+        assert_eq!(record.bonds[0].attachment_mode.as_deref(), Some("ANY"));
+        assert_eq!(record.link_nodes[0].max_repeat, 4);
+        assert_eq!(record.diagnostics.len(), 1);
+        assert_eq!(
+            record.diagnostics[0].code,
+            "rgroup-attachment-context-not-supported"
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Skeletal).unwrap();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Ctfile {
+                atom_annotations,
+                variable_attachments,
+                ..
+            } if atom_annotations.iter().all(|annotation| annotation.kind == "link-node")
+                && atom_annotations.iter().any(|annotation| annotation.label == "1–4")
+                && variable_attachments.iter().any(|attachment|
+                    attachment.mode == "ANY" && attachment.endpoint_atom_indexes.len() == 3)
+        )));
+    }
+
+    #[test]
+    fn invalid_multicenter_bonds_and_link_nodes_are_diagnostic() {
+        let sdf = concat!(
+            "invalid attachment semantics\n  molchemist\n\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 3 1 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 1 C 0 0 0 0\n",
+            "M  V30 2 * 1.5 0 0 0\n",
+            "M  V30 3 F 3 0 0 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 2 3 ENDPTS=(1 1) ATTACH=MAYBE\n",
+            "M  V30 END BOND\n",
+            "M  V30 LINKNODE 2 4 1 2 3\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert_eq!(record.bonds[0].endpoint_source_ids, vec![1]);
+        assert_eq!(record.bonds[0].attachment_mode.as_deref(), Some("MAYBE"));
+        assert_eq!(record.link_nodes[0].min_repeat, 2);
+        assert_eq!(
+            record
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "invalid-multicenter-bond-semantics",
+                "invalid-link-node-semantics"
+            ]
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Skeletal).unwrap();
+        assert!(commands.iter().all(|command| !matches!(
+            command,
+            Command::Ctfile {
+                variable_attachments,
+                ..
+            } if !variable_attachments.is_empty()
+        )));
+    }
+
+    #[test]
+    fn standard_atom_attributes_drive_glyphs_and_user_collections_are_preserved() {
+        let sdf = concat!(
+            "collections\n  molchemist\n\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 2 1 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 \"NOT [C,N]\" 0 0 0 0\n",
+            "M  V30 20 R# 1.5 0 0 0 RGROUPS=(1 7)\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 10 20\n",
+            "M  V30 END BOND\n",
+            "M  V30 BEGIN COLLECTION\n",
+            "M  V30 MOLCHEMIST/SELECTION ATOMS=(2 10 20)\n",
+            "M  V30 END COLLECTION\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert_eq!(record.collections.len(), 1);
+        assert_eq!(record.collections[0].name, "MOLCHEMIST/SELECTION");
+        assert_eq!(record.collections[0].kind, "user-defined");
+        assert_eq!(record.collections[0].atom_source_ids, vec![10, 20]);
+        assert_eq!(record.diagnostics.len(), 1);
+        assert_eq!(
+            record.diagnostics[0].code,
+            "user-defined-collection-not-depicted"
+        );
+        let commands = sdf_to_commands(sdf, RenderMode::Skeletal).unwrap();
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Fragment { atom: Some(atom), .. }
+                if atom.symbol == "[C,N]" && atom.query_negated
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Fragment { atom: Some(atom), .. }
+                if atom.symbol == "R" && atom.rgroup_label == Some(7)
+        )));
+    }
+
+    #[test]
+    fn uninterpreted_sgroups_and_non_graph_highlights_are_diagnostic() {
+        let sdf = concat!(
+            "future metadata\n  molchemist\n\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 1 0 1 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 1 C 0 0 0 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN SGROUP\n",
+            "M  V30 3 ZZZ 0 ATOMS=(1 1)\n",
+            "M  V30 END SGROUP\n",
+            "M  V30 BEGIN COLLECTION\n",
+            "M  V30 MDLV30/HILITE SGROUPS=(1 3)\n",
+            "M  V30 END COLLECTION\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert_eq!(record.sgroups[0].type_code, "ZZZ");
+        assert_eq!(record.sgroups[0].kind, "unknown");
+        assert_eq!(record.collections[0].sgroup_source_ids, vec![3]);
+        assert_eq!(
+            record
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code.as_str())
+                .collect::<Vec<_>>(),
+            vec!["unknown-sgroup-semantics", "highlight-members-not-depicted"]
+        );
+    }
+
+    #[test]
+    fn real_v2000_multi_atom_superatoms_contract_to_labelled_graph_nodes() {
+        let sdf =
+            include_str!("../../molchemist-cli/tests/fixtures/rdkit/Sgroups_Abbreviations.mol");
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert!(record.diagnostics.is_empty());
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        let fragments = fragment_data(&commands);
+        assert_eq!(fragments.len(), 8);
+        assert!(fragments.iter().any(|(element, _, _)| element == "NO₂"));
+        assert!(fragments.iter().any(|(element, _, _)| element == "COOH"));
+        assert_eq!(bond_data(&commands).len(), 8);
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Ctfile { .. })));
+    }
+
+    #[test]
+    fn contracted_superatom_remaps_crossing_and_internal_bond_highlights() {
+        let sdf = concat!(
+            "contracted highlight\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 3 2 1 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 C 0.0000 0.0000 0.0000 0\n",
+            "M  V30 20 C 1.5000 0.0000 0.0000 0\n",
+            "M  V30 30 O 3.0000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 10 20\n",
+            "M  V30 2 1 20 30\n",
+            "M  V30 END BOND\n",
+            "M  V30 BEGIN SGROUP\n",
+            "M  V30 4 SUP 0 ATOMS=(2 20 30) XBONDS=(1 1) LABEL=Et\n",
+            "M  V30 END SGROUP\n",
+            "M  V30 BEGIN COLLECTION\n",
+            "M  V30 MDLV30/HILITE ATOMS=(1 30) BONDS=(2 1 2)\n",
+            "M  V30 END COLLECTION\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        let fragments = fragment_data(&commands);
+        assert_eq!(fragments.len(), 2);
+        assert!(fragments
+            .iter()
+            .any(|(element, name, _)| { element == "Et" && name == "a1" }));
+        assert_eq!(bond_data(&commands).len(), 1);
+
+        match commands.last().unwrap() {
+            Command::Ctfile {
+                sgroups,
+                highlights,
+                ..
+            } => {
+                assert!(sgroups.is_empty());
+                assert_eq!(highlights.len(), 1);
+                assert_eq!(highlights[0].atom_indexes, vec![1]);
+                assert_eq!(highlights[0].bonds.len(), 1);
+                assert_eq!(highlights[0].bonds[0].bond_index, 0);
+                assert_eq!(highlights[0].bonds[0].atom1_index, 0);
+                assert_eq!(highlights[0].bonds[0].atom2_index, 1);
+            }
+            command => panic!("expected CTfile overlay, got {command:?}"),
+        }
+    }
+
+    #[test]
+    fn multi_attachment_superatom_uses_boundary_atom_centroid() {
+        let sdf = concat!(
+            "two attachments\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 4 3 1 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 C 0.0000 0.0000 0.0000 0\n",
+            "M  V30 20 C 1.5000 0.0000 0.0000 0\n",
+            "M  V30 30 C 3.0000 0.0000 0.0000 0\n",
+            "M  V30 40 C 4.5000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 10 20\n",
+            "M  V30 2 1 20 30\n",
+            "M  V30 3 1 30 40\n",
+            "M  V30 END BOND\n",
+            "M  V30 BEGIN SGROUP\n",
+            "M  V30 4 SUP 0 ATOMS=(2 20 30) XBONDS=(2 1 3) LABEL=CH2\n",
+            "M  V30 END SGROUP\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+        let parsed = parse_sdf_record(sdf, 1).unwrap();
+        let mol = render_mol_from_record(&parsed.chemical, vec![None; 4]);
+        let projection = project_record_render(&parsed.chemical, mol);
+
+        assert_eq!(projection.mol.atoms.len(), 3);
+        assert_eq!(projection.mol.atoms[1].element, "CH₂");
+        assert!((projection.mol.atoms[1].x - 2.25).abs() <= 1e-8);
+        assert!(projection.mol.atoms[1].y.abs() <= 1e-8);
+        assert_eq!(projection.mol.bonds.len(), 2);
+        assert_eq!(projection.bond_indexes, vec![Some(0), None, Some(1)]);
+    }
+
+    #[test]
+    fn explicitly_expanded_multi_atom_superatom_keeps_its_source_graph() {
+        let sdf = concat!(
+            "expanded superatom\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 3 2 1 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 10 C 0.0000 0.0000 0.0000 0\n",
+            "M  V30 20 C 1.5000 0.0000 0.0000 0\n",
+            "M  V30 30 O 3.0000 0.0000 0.0000 0\n",
+            "M  V30 END ATOM\n",
+            "M  V30 BEGIN BOND\n",
+            "M  V30 1 1 10 20\n",
+            "M  V30 2 1 20 30\n",
+            "M  V30 END BOND\n",
+            "M  V30 BEGIN SGROUP\n",
+            "M  V30 4 SUP 0 ATOMS=(2 20 30) XBONDS=(1 1) LABEL=Et ESTATE=E\n",
+            "M  V30 END SGROUP\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert_eq!(record.sgroups[0].expanded, Some(true));
+        assert!(record.diagnostics.is_empty());
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        assert_eq!(fragment_data(&commands).len(), 3);
+        assert_eq!(bond_data(&commands).len(), 2);
+        match commands.last().unwrap() {
+            Command::Ctfile { sgroups, .. } => assert_eq!(sgroups.len(), 1),
+            command => panic!("expected expanded SGroup overlay, got {command:?}"),
+        }
+    }
+
+    #[test]
+    fn superatom_labels_use_subscript_digits_without_changing_leading_numbers() {
+        assert_eq!(typographic_superatom_label("NO2"), "NO₂");
+        assert_eq!(typographic_superatom_label("C12H25"), "C₁₂H₂₅");
+        assert_eq!(typographic_superatom_label("1,2-Et2"), "1,2-Et₂");
+    }
+
+    #[test]
+    fn v2000_atom_lists_rgroups_and_sgroups_are_normalized() {
+        let sdf = concat!(
+            "v2000 fidelity\n",
+            "  molchemist\n",
+            "\n",
+            "  2  1  0  0  0  0  0  0  0  0  1 V2000\n",
+            "    0.0000    0.0000    0.0000 L   0  0  0  1  0  0  0  0  0  0  0  0\n",
+            "    1.5000    0.0000    0.0000 R#  0  0  0  0  0  0  0  0  0  0  0  0\n",
+            "  1  2  1  0  0  0  0\n",
+            "M  ALS   1  2 F C   N   \n",
+            "M  RGP  1   2   5\n",
+            "M  STY  1   3 SRU\n",
+            "M  SST  1   3 ALT\n",
+            "M  SCN  1   3 HT\n",
+            "M  SBT  1   3   1\n",
+            "M  SAL   3  2   1   2\n",
+            "M  SBL   3  1   1\n",
+            "M  SMT   3 n\n",
+            "M  SDI   3  4   -0.4000    0.5000   -0.4000   -0.5000\n",
+            "M  SDI   3  4    1.9000    0.5000    1.9000   -0.5000\n",
+            "M  END\n",
+        );
+
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        let query = record.atoms[0].query.as_ref().unwrap();
+        assert_eq!(query.elements, Some(vec!["C".to_string(), "N".to_string()]));
+        assert_eq!(query.hydrogen_count, Some(0));
+        assert_eq!(record.atoms[1].rgroup_labels, vec![5]);
+        assert_eq!(record.sgroups[0].kind, "structure-repeat-unit");
+        assert_eq!(record.sgroups[0].atom_source_ids, vec![1, 2]);
+        assert_eq!(record.sgroups[0].crossing_bond_source_ids, vec![1]);
+        assert_eq!(record.sgroups[0].label.as_deref(), Some("n"));
+        assert_eq!(record.sgroups[0].subtype.as_deref(), Some("ALT"));
+        assert_eq!(record.sgroups[0].connectivity.as_deref(), Some("HT"));
+        assert_eq!(record.sgroups[0].bracket_type.as_deref(), Some("1"));
+        assert_eq!(record.sgroups[0].brackets.len(), 2);
+        assert!(record.diagnostics.is_empty());
+
+        let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
+        match commands.last().unwrap() {
+            Command::Ctfile { atom_queries, .. } => {
+                assert_eq!(atom_queries[0].label, "no implicit H");
+                assert_eq!(atom_queries[0].compact_label, "(H0)");
+            }
+            command => panic!("expected CTfile overlay, got {command:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_v3000_query_count_is_reported() {
+        let sdf = concat!(
+            "invalid v3000 query\n",
+            "  molchemist\n",
+            "\n",
+            "  0  0  0     0  0            999 V3000\n",
+            "M  V30 BEGIN CTAB\n",
+            "M  V30 COUNTS 1 0 0 0 0\n",
+            "M  V30 BEGIN ATOM\n",
+            "M  V30 1 C 0.0000 0.0000 0.0000 0 HCOUNT=6 SUBST=-3 UNSAT=2 RBCNT=-3\n",
+            "M  V30 END ATOM\n",
+            "M  V30 END CTAB\n",
+            "M  END\n",
+        );
+
+        let record = inspect_sdf_record(sdf, 1).unwrap();
+        assert_eq!(record.diagnostics.len(), 1);
+        assert_eq!(record.diagnostics[0].code, "invalid-v3000-query-count");
+        assert_eq!(record.diagnostics[0].atom_source_ids, vec![1]);
     }
 
     #[test]
@@ -3523,7 +4988,12 @@ mod tests {
             isotope: None,
             radical: None,
             atom_map: None,
+            rgroup_label: None,
+            query_symbol: false,
+            query_negated: false,
             stereo_annotation: None,
+            force_label: false,
+            hide_label: false,
         }
     }
 

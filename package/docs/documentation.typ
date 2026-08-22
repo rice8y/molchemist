@@ -1,5 +1,4 @@
 #import "@preview/mantys:1.0.2": *
-#import "@preview/codly:1.3.0"
 #import "../lib.typ" as molchemist
 #let cetz = molchemist.cetz
 
@@ -11,6 +10,14 @@
 #let docs-bond-semantics-sdf = read("assets/bond-semantics.sdf")
 #let docs-stereochemistry-sdf = read("assets/stereochemistry.sdf")
 #let docs-collapsed-layout-sdf = read("assets/collapsed-layout.sdf")
+#let docs-ctfile-fidelity-sdf = read("assets/ctfile-fidelity.sdf")
+#let docs-highlight-shapes-sdf = read("assets/highlight-shapes.sdf", encoding: none)
+#let docs-superatom-abbreviations-mol = read("assets/Sgroups_Abbreviations.mol", encoding: none)
+#let docs-attachment-collections-sdf = read(
+  "assets/ctfile-attachments-collections.sdf",
+  encoding: none,
+)
+#let docs-link-node-mol = read("assets/Sgroups_Link_01.mol", encoding: none)
 
 #let styled-theme = create-theme(
   fonts: (
@@ -42,6 +49,8 @@
 
   title-page: (doc, theme) => {
     let license = doc.package.license
+    show outline.entry.where(level: 2): none
+    show outline.entry.where(level: 3): none
 
     let patched-doc = doc + (
       package: doc.package + (
@@ -71,6 +80,7 @@
   ],
 
   wrap-snippets: true,
+  show-urls-in-footnotes: false,
 
   examples-scope: (
     scope: (
@@ -83,6 +93,11 @@
       docs-bond-semantics-sdf: docs-bond-semantics-sdf,
       docs-stereochemistry-sdf: docs-stereochemistry-sdf,
       docs-collapsed-layout-sdf: docs-collapsed-layout-sdf,
+      docs-ctfile-fidelity-sdf: docs-ctfile-fidelity-sdf,
+      docs-highlight-shapes-sdf: docs-highlight-shapes-sdf,
+      docs-superatom-abbreviations-mol: docs-superatom-abbreviations-mol,
+      docs-attachment-collections-sdf: docs-attachment-collections-sdf,
+      docs-link-node-mol: docs-link-node-mol,
     ),
     imports: (
       molchemist: "*",
@@ -92,11 +107,7 @@
   theme: my-theme,
 )
 
-#let example = example.with(side-by-side: false, breakable: true)
-#let doc-code(..args, body) = frame(
-  breakable: true,
-  codly.local(number-format: none, breakable: true, ..args, body),
-)
+#let example = example.with(side-by-side: false, breakable: false)
 
 #import molchemist: *
 
@@ -106,7 +117,7 @@ Import `molchemist` and choose the renderer that matches your input: @cmd:render
 
 #example[
   ```typ
-  #import "@preview/molchemist:0.1.4": *
+  #import "@preview/molchemist:0.1.5": *
 
   #let mol-data = read("Structure2D_COMPOUND_CID_93406.sdf")
   #render-mol(mol-data, abbreviate: true)
@@ -117,29 +128,12 @@ Import `molchemist` and choose the renderer that matches your input: @cmd:render
 
 The examples below assume this import unless they need an additional package such as CeTZ.
 
-On Typst 0.15.0 and later, @cmd:render-mol[-] can also receive `path("molecule.sdf")` directly. This manual keeps using `read(...)` in examples for compatibility with older Typst versions.
-
-Molfile/SDF records are detected as V2000 or V3000 automatically. When one SDF contains multiple structures, pass the one-based #arg[record] option, for example `render-mol(sdf-data, record: 2)`. Missing records, empty structures, and malformed coordinate data report an error instead of producing an empty drawing.
-
-Usable 2D coordinates are preserved exactly. If bonded atoms collapse onto the same XY positions, a 3D record has no usable XY projection, or bond lengths are numerically unstable, `molchemist` generates a fresh 2D layout with Coordgen. Atom metadata, bond semantics, and stereochemical wedges/dashes still come from the selected SDF record.
-
-SDF bond semantics are retained beyond the usual single, double, and triple orders. Aromatic and query bonds use dashed/dotted variants, any and `either` single bonds use a wavy line, undefined double-bond geometry uses a crossed double bond, coordination bonds retain their donor-to-acceptor arrow direction, and hydrogen bonds use a dotted line. SMILES quadruple bonds written with `$`, such as `[Cr]$[Cr]`, use four parallel lines. Long hydrogen bonds do not affect the covalent bond-length normalization used by the renderer. A wedge/dash bond to explicit hydrogen remains visible in abbreviated and skeletal modes. Atom `CFG` parity and V3000 enhanced stereo groups are retained as annotations below the structure and in dumped source.
-
-SMILES is useful for compact inline examples or generated documents. Because SMILES stores connectivity rather than drawing coordinates, `molchemist` first computes a 2D layout and then renders the structure.
-
-Dot-separated SMILES and disconnected Molfile/SDF graphs keep every component and place them side by side without inserting a visible operator. Atom and bond indices remain global across the complete input, so #arg[show-indices] and annotation anchors work across component boundaries. Isolated hydrogen and carbon-only components also remain visible in abbreviated and skeletal modes.
-
-#example(```typ
-#render-smiles(
-  "CCC1=C(N=C2C=CC=C(N2C1=O)C)C",
-  abbreviate: true,
-)
-```)
-
 == Choosing an Input Format
 
-- `Molfile / SDF`: coordinate-bearing structure text. Use it for database exports or drawing-tool output when preserving the supplied layout matters.
+- `Molfile / SDF`: coordinate-bearing structure text. Use it for database exports or drawing-tool output when preserving the supplied layout matters. Pass the one-based #arg[record] option for multi-record SDF input. Typst 0.15.0 and later may pass `path("molecule.sdf")` directly; this manual uses `read(...)` for compatibility with earlier versions.
 - `SMILES`: compact inline source text. Use it for examples, generated documents, and quick sketches. `molchemist` computes 2D coordinates before rendering.
+
+Detailed guarantees and typeset examples for record selection, coordinate recovery, semantic inspection, CTfile queries and highlights, bond semantics, stereochemistry, and disconnected components are collected in *Input and Semantic Fidelity* rather than repeated in this introductory chapter.
 
 = Compatibility and Test Coverage
 
@@ -250,6 +244,36 @@ The examples in this chapter focus on information that is easy to lose when a mo
 
 The second synthetic record also demonstrates V3000 charge, isotope, radical, and atom-map fields. Bond configuration is covered separately in the stereochemistry examples below. An out-of-range record number, an empty structure, malformed CTAB data, or non-finite coordinates raises an explicit error instead of silently drawing the wrong record.
 
+== Semantic Inspection and Fidelity Policy
+
+The @cmd:inspect-mol[-] function exposes a versioned semantic dictionary before depiction. It contains the record header, stable source atom and bond IDs, enhanced stereo groups, SGroups and their attachment points, link nodes, collections, ordered SDF properties, the exact selected record, and diagnostics for parsed features the renderer cannot yet depict. V3000 source IDs retain their original CTAB values; V2000 source IDs use one-based source positions. Unlike a dictionary, the property array preserves duplicate names and multiline values.
+
+#example[
+  ```typ
+  #let record = inspect-mol(read("structures.sdf"), record: 2)
+  #table(
+    columns: 2,
+    [Schema], [#record.schemaVersion],
+    [Format], [#record.format],
+    [First source ID], [#record.atoms.first().sourceId],
+    [Properties], [#record.properties.len()],
+    [Diagnostics], [#record.diagnostics.len()],
+  )
+  ```
+][
+  #let record = inspect-mol(docs-sdf-version-records, record: 2)
+  #table(
+    columns: 2,
+    [Schema], [#record.schemaVersion],
+    [Format], [#record.format],
+    [First source ID], [#record.atoms.first().sourceId],
+    [Properties], [#record.properties.len()],
+    [Diagnostics], [#record.diagnostics.len()],
+  )
+]
+
+Labelled, unexpanded multi-atom superatoms are contracted in every fidelity mode. SGroup SAP entries, variable-attachment bonds, link nodes, and atom/bond HILITE collections are preserved in the same semantic record; features without a standard or implemented depiction remain explicit diagnostics. Use `render-mol(data, fidelity: "strict")` to reject those gaps, including reaction-center flags and arbitrary user-defined collections. The default `"ignore"` keeps existing document behavior. The command-line interface defaults to `--fidelity warn`; `molchemist inspect` writes the complete semantic record as JSON.
+
 == Coordinate Preservation and Layout Recovery
 
 Usable source coordinates are preserved, including their relative orientation. Automatic layout is requested only when the XY geometry is unusable—for example, when every bonded atom is collapsed onto one point or a nominally 3D record has no meaningful XY projection. The recovered drawing still uses the source bond orders, wedge direction, atom metadata, and record ordering.
@@ -347,6 +371,230 @@ Bracket-atom metadata remains structured through the SMILES parser, WASM boundar
 
 In full mode, explicitly represented hydrogen atoms remain separate graph nodes. In abbreviated and skeletal modes, foldable hydrogens join their parent labels, except when folding would erase a stereochemical wedge/dash or change the meaning of a bridging hydrogen.
 
+== CTfile Queries, SGroups, Collections, and Attachments
+
+CTfile display information travels through the same semantic record and depiction AST. Atom lists use MDL-style glyphs such as `![C,N]`. Hydrogen count, substitution count, unsaturation, ring-bond count, and valence constraints use compact parenthetical annotations such as `(H1)`, `(s3)`, `(u)`, and `(r2)`; set `config: (ctfile: (query-details: true))` to show explicit labels such as `implicit H >= 1` instead.
+
+MDL query `H0` means that no implicit hydrogen is allowed unless it is drawn explicitly; `Hn` means at least _n_ implicit hydrogens in excess of hydrogens explicitly drawn. Consequently, V3000 `HCOUNT=-1` normalizes to `H0`, while source values `HCOUNT=1`, `2`, …, `4` normalize directly to `H1`, `H2`, …, `H4`; the source record remains available unchanged through @cmd:inspect-mol[-]. R-group labels remain visible, and ring/chain bond topology uses the plain `rn` / `ch` annotations. Labelled, unexpanded multi-atom `SUP` SGroups contract to graph nodes; other known SGroup types use common brackets with adjacent labels. V3000 atom/bond `MDLV30/HILITE` collections render on a background layer that follows glyph bounds. Ordered SDF properties remain available through inspection.
+
+For substitution and ring-bond counts, the CTfile sentinel `-2` is depicted as `(s*)` / `(r*)` (“as drawn”), and `-1` as `(s0)` / `(r0)`. Substitution values of six or more share the `(s6)` bucket; ring-bond values of four or more share `(r4)`.
+
+#example[
+  ```typ
+  #let data = read("ctfile-fidelity.sdf")
+  #render-mol(
+    data,
+    fidelity: "strict",
+    config: (
+      ctfile: (
+        highlight-paint: rgb("#74c0fc").transparentize(45%),
+      ),
+    ),
+  )
+  ```
+][
+  #render-mol(
+    docs-ctfile-fidelity-sdf,
+    fidelity: "strict",
+    config: (
+      ctfile: (
+        highlight-paint: rgb("#74c0fc").transparentize(45%),
+      ),
+    ),
+  )
+]
+
+=== Multi-atom Superatom Contraction
+
+An unexpanded `SUP` SGroup with more than one source atom contracts to one labelled graph node. Internal atoms and bonds remain available through `inspect-mol`, while the depiction removes internal bonds and reconnects every crossing bond to the contracted glyph. With one attachment atom, its source coordinate is retained; with several attachment atoms, their centroid defines the glyph position. Atom highlights on hidden members project to the glyph, crossing-bond highlights follow the reconnected bond, and an internal-bond-only highlight also resolves to the glyph.
+
+The example below uses the real ACD/Labs V2000 `NO2` / `COOH` fixture distributed by RDKit. `fidelity: "strict"` succeeds because both labelled SGroups are contracted; `NO2` is typeset as `NO₂` without changing the inspected CTfile label.
+
+#example[
+  ```typ
+  #let data = read("Sgroups_Abbreviations.mol", encoding: none)
+  #render-mol(data, skeletal: true, fidelity: "strict")
+  ```
+][
+  #render-mol(
+    docs-superatom-abbreviations-mol,
+    skeletal: true,
+    fidelity: "strict",
+  )
+]
+
+#pagebreak(weak: true)
+
+=== Attachment Points, Link Nodes, and Collections
+
+SGroup `M  SAP` and `SAP=(...)` entries remain structured as attachment atom, optional leaving atom, and connection ID; contracted multi-atom superatoms use those explicit attachment atoms to choose the glyph position. V2000 `M  APO` and V3000 `ATTCHPT` are R-group-member attributes, not main-CTAB atom decorations. A value found on the main CTAB is therefore preserved but rejected by strict fidelity instead of being presented as a standard glyph.
+
+V2000 `M  LIN` and V3000 `LINKNODE` entries render their minimum–maximum repeat range next to the link atom. A V3000 variable-attachment bond preserves `ENDPTS` and `ATTACH`: `ANY` alternatives use dotted branches, while `ALL` uses solid branches. Atom lists belong to atom types, and R-group numbers belong to `RGROUPS`; they are not COLLECTION kinds. `MDLV30/HILITE` has a defined renderer convention. Other internal or user-defined collections retain their full name, atom/bond/SGroup/3D/R-group member lists, generic members, and original logical entry through @cmd:inspect-mol[-], but no visual convention is invented for them.
+
+#example[
+  ```typ
+  #let data = read("ctfile-attachments-collections.sdf", encoding: none)
+  #align(center)[
+    #render-mol(
+      data, record: 1, skeletal: true, fidelity: "strict",
+      config: (atom-sep: 3.8em),
+    )
+  ]
+  ```
+][
+  #align(center)[
+    #render-mol(
+      docs-attachment-collections-sdf,
+      record: 1,
+      skeletal: true,
+      fidelity: "strict",
+      config: (atom-sep: 3.8em),
+    )
+    #v(2mm)
+    #text(size: 0.82em, fill: luma(32%))[
+      V3000 position variation: dotted branches are the `ATTACH=ANY` endpoint alternatives.
+    ]
+  ]
+]
+
+#example[
+  ```typ
+  #let data = read("ctfile-attachments-collections.sdf", encoding: none)
+  #align(center)[
+    #render-mol(
+      data, record: 2, skeletal: true, fidelity: "strict",
+      config: (atom-sep: 3.8em),
+    )
+  ]
+  ```
+][
+  #align(center)[
+    #render-mol(
+      docs-attachment-collections-sdf,
+      record: 2,
+      skeletal: true,
+      fidelity: "strict",
+      config: (atom-sep: 3.8em),
+    )
+    #v(2mm)
+    #text(size: 0.82em, fill: luma(32%))[
+      Standard atom-list query and R-group 7 atom attributes; the terminal `*` is an explicit wildcard atom.
+    ]
+  ]
+]
+
+#example[
+  ```typ
+  #let data = read("Sgroups_Link_01.mol", encoding: none)
+  #align(center)[
+    #render-mol(
+      data, skeletal: true, fidelity: "strict",
+      config: (atom-sep: 3.8em),
+    )
+  ]
+  ```
+][
+  #align(center)[
+    #render-mol(
+      docs-link-node-mol,
+      skeletal: true,
+      fidelity: "strict",
+      config: (atom-sep: 3.8em),
+    )
+    #v(2mm)
+    #text(size: 0.82em, fill: luma(32%))[
+      Real V2000 `M  LIN` fixture from RDKit; the link repeat range is 1–3.
+    ]
+  ]
+]
+
+#example[
+  ```typ
+  #let data = read("ctfile-attachments-collections.sdf", encoding: none)
+  #let record = inspect-mol(data, record: 3)
+  #let collection = record.collections.first()
+  #table(
+    columns: 2,
+    [Name], [#raw(collection.name)],
+    [Kind], [#collection.kind],
+    [Atom IDs], [#collection.atomSourceIds.map(str).join(", ")],
+    [Bond IDs], [#collection.bondSourceIds.map(str).join(", ")],
+    [Diagnostic], [#record.diagnostics.first().code],
+  )
+  ```
+][
+  #let record = inspect-mol(docs-attachment-collections-sdf, record: 3)
+  #let collection = record.collections.first()
+  #table(
+    columns: 2,
+    [Name], [#raw(collection.name)],
+    [Kind], [#collection.kind],
+    [Atom IDs], [#collection.atomSourceIds.map(str).join(", ")],
+    [Bond IDs], [#collection.bondSourceIds.map(str).join(", ")],
+    [Diagnostic], [#record.diagnostics.first().code],
+  )
+]
+
+=== Highlight Depiction
+
+V3000 `MDLV30/HILITE` collections keep atom and bond membership separate. A highlighted skeletal carbon uses a circle centered on the hidden vertex. A visible atom uses the same visual treatment, expanding to a rounded rectangle only when its rendered glyph bounds are wider than the configured radius. Bond-only highlights use a constant-width capsule with round ends. Atom and bond subpaths share one non-zero compound fill, so connected selections read as one continuous region while disconnected selections remain visually separate.
+
+#example[
+  ```typ
+  #let data = read("highlight-shapes.sdf", encoding: none)
+  #let highlight-case(title, record, paint) = align(center)[
+    *#title*
+    #v(2mm)
+    #render-mol(
+      data, record: record, skeletal: true, fidelity: "strict",
+      config: (ctfile: (
+        highlight-paint: paint.transparentize(35%),
+      )),
+    )
+  ]
+
+  #grid(
+    columns: 2,
+    gutter: 10mm,
+    row-gutter: 8mm,
+    align: top,
+    highlight-case([Atom only · skeletal vertex], 1, rgb("#74c0fc")),
+    highlight-case([Atom only · query glyph], 2, rgb("#51cf66")),
+    highlight-case([Bond only · capsule], 3, rgb("#ffd43b")),
+    highlight-case([Connected atom + bond], 4, rgb("#cc5de8")),
+    highlight-case([Disconnected regions], 5, rgb("#ff922b")),
+  )
+  ```
+][
+  #let highlight-case(title, record, paint) = align(center)[
+    *#title*
+    #v(2mm)
+    #render-mol(
+      docs-highlight-shapes-sdf,
+      record: record,
+      skeletal: true,
+      fidelity: "strict",
+      config: (ctfile: (
+        highlight-paint: paint.transparentize(35%),
+      )),
+    )
+  ]
+
+  #grid(
+    columns: 2,
+    gutter: 10mm,
+    row-gutter: 8mm,
+    align: top,
+    highlight-case([Atom only · skeletal vertex], 1, rgb("#74c0fc")),
+    highlight-case([Atom only · query glyph], 2, rgb("#51cf66")),
+    highlight-case([Bond only · capsule], 3, rgb("#ffd43b")),
+    highlight-case([Connected atom + bond], 4, rgb("#cc5de8")),
+    highlight-case([Disconnected regions], 5, rgb("#ff922b")),
+  )
+]
+
+The regression corpus also includes #link("https://github.com/rdkit/rdkit/blob/b421f19c9f564d0cb66148c4e614c59abadf5413/Code/GraphMol/FileParsers/test_data/v3k.crash1.mol")[RDKit/Bingo's real V3000 `v3k.crash1.mol`], which declares the same source ID in separate atom and bond `HILITE` collections. Semantic tests preserve those source memberships independently, and the SVG regression checks the compound-path topology for every case above.
+
 == Bond Semantics
 
 V3000 bond orders `4` through `10` remain distinct: aromatic, single-or-double, single-or-aromatic, double-or-aromatic, any, coordination, and hydrogen bonds are not collapsed to ordinary single bonds. Query and aromatic bonds use dashed/dotted partial lines, any/either bonds use a wavy line, coordination bonds preserve their donor-to-acceptor direction with a filled arrowhead, and hydrogen bonds use a dotted line. A SMILES `$` bond is rendered separately as four parallel lines.
@@ -438,7 +686,7 @@ OpenSMILES `@` and `@@` are interpreted using local SMILES neighbor order, not b
 
 #example[
   ```typ
-  #let stereo-card(title, source) = align(center)[
+  #let stereo-example(title, source) = align(center)[
     *#title*
     #v(2mm)
     #render-smiles(source, skeletal: true)
@@ -449,14 +697,14 @@ OpenSMILES `@` and `@@` are interpreted using local SMILES neighbor order, not b
     gutter: 10mm,
     row-gutter: 6mm,
     align: top,
-    stereo-card([D-alanine · (R)], "N[C@H](C)C(=O)O"),
-    stereo-card([L-alanine · (S)], "N[C@@H](C)C(=O)O"),
-    stereo-card([E-difluoroethene], "F/C=C/F"),
-    stereo-card([Z-difluoroethene], "F/C=C\\F"),
+    stereo-example([D-alanine · (R)], "N[C@H](C)C(=O)O"),
+    stereo-example([L-alanine · (S)], "N[C@@H](C)C(=O)O"),
+    stereo-example([E-difluoroethene], "F/C=C/F"),
+    stereo-example([Z-difluoroethene], "F/C=C\\F"),
   )
   ```
 ][
-  #let stereo-card(title, source) = align(center)[
+  #let stereo-example(title, source) = align(center)[
     *#title*
     #v(2mm)
     #render-smiles(source, skeletal: true)
@@ -467,10 +715,10 @@ OpenSMILES `@` and `@@` are interpreted using local SMILES neighbor order, not b
     gutter: 10mm,
     row-gutter: 6mm,
     align: top,
-    stereo-card([D-alanine · (R)], "N[C@H](C)C(=O)O"),
-    stereo-card([L-alanine · (S)], "N[C@@H](C)C(=O)O"),
-    stereo-card([E-difluoroethene], "F/C=C/F"),
-    stereo-card([Z-difluoroethene], "F/C=C\\F"),
+    stereo-example([D-alanine · (R)], "N[C@H](C)C(=O)O"),
+    stereo-example([L-alanine · (S)], "N[C@@H](C)C(=O)O"),
+    stereo-example([E-difluoroethene], "F/C=C/F"),
+    stereo-example([Z-difluoroethene], "F/C=C\\F"),
   )
 ]
 
@@ -702,392 +950,82 @@ Use @cmd:arrow-annotation[-] for molecule-level process arrows or simple directi
   )
 ]
 
+#pagebreak(weak: true)
 == Reaction Schemes
 
 For reactions, compose separate molecule renderings with normal Typst/CeTZ layout. This keeps reaction arrows independent from molecule annotations.
 
 #example(```typ
-#let reaction-arrow(above, below: none) = cetz.canvas({
+#let reaction-arrow = cetz.canvas({
   import cetz.draw: *
   line(
-    (0.1, 0),
-    (2.95, 0),
+    (0.1, 0), (2.7, 0),
     stroke: 0.65pt + black,
     mark: (end: ">>", scale: 0.72, fill: black),
   )
-  content((1.52, 0.42), text(size: 0.78em)[#above], anchor: "south")
-  if below != none {
-    content((1.52, -0.38), text(size: 0.72em)[#below], anchor: "north")
-  }
+  content((1.4, 0.4), text(size: 0.76em)[NaBH#sub[4] / MeOH], anchor: "south")
 })
 
 #grid(
-  columns: (auto, 28mm, auto),
+  columns: (auto, 26mm, auto),
   column-gutter: 4mm,
   align: horizon + center,
   render-smiles("O=CC1=CC=CC=C1", abbreviate: true),
-  reaction-arrow([NaBH#sub[4]], below: [MeOH]),
+  reaction-arrow,
   render-smiles("OCC1=CC=CC=C1", abbreviate: true),
 )
 ```)
 
-== Mechanism Example: von Richter Reaction
+#pagebreak(weak: true)
+== Schematic von Richter Transformation
 
-Long mechanisms can combine SMILES rendering, @cmd:cetz-annotation[-] for electron movement, and ordinary CeTZ layout. This example shows the classical conversion of p-bromonitrobenzene to m-bromobenzoic acid.
+The package does not yet parse reaction formats or infer reaction centers. Reaction figures therefore compose separately rendered molecules. The net conversion below is a schematic overview, not an exhaustive electron-pushing mechanism: cyanide addition and rearrangement are represented by the labelled arrow, and the product is shown after aqueous workup.
 
 #example[
   ```typ
-  // Electron-flow helpers.
-  #let electron-arrows(body) = cetz-annotation(mol => {
-    import cetz.draw: *
-    body(mol)
-  })
-
-  #let electron-arrow(
-    mol,
-    from,
-    to,
-    from-offset: (0, 0),
-    to-offset: (0, 0),
-    controls: ((0.35, 0.6), (0.35, 0.6)),
-  ) = {
-    import cetz.draw: *
-    let start = (to: (name: mol, anchor: from), rel: from-offset)
-    let end = (to: (name: mol, anchor: to), rel: to-offset)
-    if controls.len() == 1 {
-      bezier(
-        start,
-        end,
-        (to: start, rel: controls.at(0)),
-        stroke: 0.48pt + black,
-        mark: (end: ">>", scale: 0.62, fill: black),
-      )
-    } else {
-      bezier(
-        start,
-        end,
-        (to: start, rel: controls.at(0)),
-        (to: end, rel: controls.at(1)),
-        stroke: 0.48pt + black,
-        mark: (end: ">>", scale: 0.62, fill: black),
-      )
-    }
-  }
-
-  #let reagent(mol, at, label, offset: (0, 0)) = {
-    import cetz.draw: *
-    content(
-      (to: (name: mol, anchor: at), rel: offset),
-      text(size: 8pt)[#label],
-      anchor: "center",
-    )
-  }
-
-  // Reaction-arrow and row-layout helpers.
-  #let reaction-arrow(above: none, below: none) = cetz.canvas({
+  #let scheme-arrow(above, below) = cetz.canvas({
     import cetz.draw: *
     line(
-      (0.08, 0),
-      (1.08, 0),
-      stroke: 0.6pt + black,
-      mark: (end: ">>", scale: 0.68, fill: black),
+      (0.08, 0), (2.45, 0),
+      stroke: 0.65pt + black,
+      mark: (end: ">>", scale: 0.72, fill: black),
     )
-    if above != none {
-      content((0.58, 0.3), text(size: 7.2pt)[#above], anchor: "south")
-    }
-    if below != none {
-      content((0.58, -0.27), text(size: 6.8pt)[#below], anchor: "north")
-    }
+    content((1.26, 0.4), text(size: 0.76em)[#above], anchor: "south")
+    content((1.26, -0.34), text(size: 0.7em)[#below], anchor: "north")
   })
 
-  #let molecule(smiles, annotations: none) = box(
-    width: 32mm,
-    align(center)[
-      #set text(size: 8pt)
-      #render-smiles(
-        smiles,
-        abbreviate: true,
-        config: (atom-sep: 1.7em),
-        annotations: annotations,
-      )
-    ],
+  #grid(
+    columns: (auto, 24mm, auto),
+    column-gutter: 4mm,
+    align: horizon + center,
+    render-smiles("O=[N+]([O-])c1ccc(Br)cc1", skeletal: true),
+    scheme-arrow([KCN], [aqueous workup]),
+    render-smiles("O=C(O)c1cc(Br)ccc1", skeletal: true),
   )
-
-  #let mechanism-row(..items) = {
-    let cells = items.pos()
-    grid(
-      columns: cells.map(
-        item => if item.at(0) == "molecule" { 32mm } else { 12mm },
-      ),
-      column-gutter: 0.6mm,
-      align: horizon + center,
-      ..cells.map(item => item.at(1)),
-    )
-  }
-
-  // Substrate and early intermediates.
-  #let substrate = molecule(
-    "O=[N+]([O-])c1ccc(Br)cc1",
-    annotations: electron-arrows(mol => {
-      import cetz.draw: *
-      reagent(mol, "east", [CN#super[-]], offset: (0.52, 0.22))
-      electron-arrow(
-        mol,
-        "east",
-        "b4.50%",
-        from-offset: (0.4, 0.42),
-        to-offset: (0.1, 0.16),
-        controls: ((0, 0.48), (0.18, 0.68)),
-      )
-    }),
-  )
-
-  #let sigma-adduct = molecule(
-    "O=[N+]([O-])C1=CC(Br)=CC=C1C#N",
-    annotations: electron-arrows(mol => {
-      electron-arrow(
-        mol,
-        "a2.south",
-        "b10.20%",
-        from-offset: (-0.05, -0.08),
-        to-offset: (0.18, 0),
-        controls: ((0, -0.4),),
-      )
-    }),
-  )
-
-  #let cyclic-imidate = molecule("N=C1ON(=O)c2ccc(Br)cc21")
-
-  // Later intermediates and products.
-  #let nitroso-amide = molecule("O=Nc1c(C(=O)N)cc(Br)cc1")
-  #let hydroxy-azo = molecule("O=C1NN(O)C2=C1C=CC(Br)=C2")
-
-  #let azoketone = molecule(
-    "O=C1N=NC2=C1C=CC(Br)=C2",
-    annotations: electron-arrows(mol => {
-      import cetz.draw: *
-      reagent(mol, "east", [OH#super[-]], offset: (0.72, 0.18))
-      electron-arrow(
-        mol,
-        "east",
-        "b0.50%",
-        from-offset: (0.48, 0.34),
-        to-offset: (0.28, 0.38),
-        controls: ((0, 0.36), (0.16, 0.5)),
-      )
-    }),
-  )
-
-  #let carboxylate = molecule("O=C([O-])c1cc(Br)ccc1")
-  #let product = molecule("O=C(O)c1cc(Br)ccc1")
-
-  // Compose the mechanism.
-  #block(breakable: false, width: 100%)[
-    #stack(
-      dir: ttb,
-      spacing: 5mm,
-      mechanism-row(
-        ("molecule", substrate),
-        ("arrow", reaction-arrow(above: [KCN], below: [EtOH / H#sub[2]O])),
-        ("molecule", sigma-adduct),
-        ("arrow", move(dy: -2.1mm, reaction-arrow(above: [cyclization]))),
-        ("molecule", cyclic-imidate),
-      ),
-      mechanism-row(
-        ("arrow", reaction-arrow(above: [ring opening])),
-        ("molecule", nitroso-amide),
-        ("arrow", reaction-arrow(above: [cyclization])),
-        ("molecule", hydroxy-azo),
-        ("arrow", reaction-arrow(above: [-H#sub[2]O])),
-        ("molecule", azoketone),
-      ),
-      align(center)[
-        #mechanism-row(
-          ("arrow", reaction-arrow(above: [OH#super[-]], below: [-N#sub[2]])),
-          ("molecule", carboxylate),
-          ("arrow", move(dy: -2mm, reaction-arrow(above: [H#super[+]]))),
-          ("molecule", product),
-        )
-      ],
-    )
-  ]
   ```
+][
+  #let scheme-arrow(above, below) = cetz.canvas({
+    import cetz.draw: *
+    line(
+      (0.08, 0), (2.45, 0),
+      stroke: 0.65pt + black,
+      mark: (end: ">>", scale: 0.72, fill: black),
+    )
+    content((1.26, 0.4), text(size: 0.76em)[#above], anchor: "south")
+    content((1.26, -0.34), text(size: 0.7em)[#below], anchor: "north")
+  })
+
+  #grid(
+    columns: (auto, 24mm, auto),
+    column-gutter: 4mm,
+    align: horizon + center,
+    render-smiles("O=[N+]([O-])c1ccc(Br)cc1", skeletal: true),
+    scheme-arrow([KCN], [aqueous workup]),
+    render-smiles("O=C(O)c1cc(Br)ccc1", skeletal: true),
+  )
 ]
 
-#let von-richter-mechanism() = {
-  let electron-arrows(body) = cetz-annotation(mol => {
-    import cetz.draw: *
-    body(mol)
-  })
-
-  let electron-arrow(
-    mol,
-    from,
-    to,
-    from-offset: (0, 0),
-    to-offset: (0, 0),
-    controls: ((0.35, 0.6), (0.35, 0.6)),
-  ) = {
-    import cetz.draw: *
-    let start = (to: (name: mol, anchor: from), rel: from-offset)
-    let end = (to: (name: mol, anchor: to), rel: to-offset)
-    if controls.len() == 1 {
-      bezier(
-        start,
-        end,
-        (to: start, rel: controls.at(0)),
-        stroke: 0.48pt + black,
-        mark: (end: ">>", scale: 0.62, fill: black),
-      )
-    } else {
-      bezier(
-        start,
-        end,
-        (to: start, rel: controls.at(0)),
-        (to: end, rel: controls.at(1)),
-        stroke: 0.48pt + black,
-        mark: (end: ">>", scale: 0.62, fill: black),
-      )
-    }
-  }
-
-  let reagent(mol, at, label, offset: (0, 0)) = {
-    import cetz.draw: *
-    content(
-      (to: (name: mol, anchor: at), rel: offset),
-      text(size: 8pt)[#label],
-      anchor: "center",
-    )
-  }
-
-  let reaction-arrow(above: none, below: none) = cetz.canvas({
-    import cetz.draw: *
-    line(
-      (0.08, 0),
-      (1.08, 0),
-      stroke: 0.6pt + black,
-      mark: (end: ">>", scale: 0.68, fill: black),
-    )
-    if above != none {
-      content((0.58, 0.3), text(size: 7.2pt)[#above], anchor: "south")
-    }
-    if below != none {
-      content((0.58, -0.27), text(size: 6.8pt)[#below], anchor: "north")
-    }
-  })
-
-  let molecule(smiles, annotations: none) = box(
-    width: 32mm,
-    align(center)[
-      #set text(size: 8pt)
-      #render-smiles(
-        smiles,
-        abbreviate: true,
-        config: (atom-sep: 1.7em),
-        annotations: annotations,
-      )
-    ],
-  )
-
-  let mechanism-row(..items) = {
-    let cells = items.pos()
-    grid(
-      columns: cells.map(
-        item => if item.at(0) == "molecule" { 32mm } else { 12mm },
-      ),
-      column-gutter: 0.6mm,
-      align: horizon + center,
-      ..cells.map(item => item.at(1)),
-    )
-  }
-
-  let substrate = molecule(
-    "O=[N+]([O-])c1ccc(Br)cc1",
-    annotations: electron-arrows(mol => {
-      import cetz.draw: *
-      reagent(mol, "east", [CN#super[-]], offset: (0.52, 0.22))
-      electron-arrow(
-        mol,
-        "east",
-        "b4.50%",
-        from-offset: (0.4, 0.42),
-        to-offset: (0.1, 0.16),
-        controls: ((0, 0.48), (0.18, 0.68)),
-      )
-    }),
-  )
-
-  let sigma-adduct = molecule(
-    "O=[N+]([O-])C1=CC(Br)=CC=C1C#N",
-    annotations: electron-arrows(mol => {
-      electron-arrow(
-        mol,
-        "a2.south",
-        "b10.20%",
-        from-offset: (-0.05, -0.08),
-        to-offset: (0.18, 0),
-        controls: ((0, -0.4),),
-      )
-    }),
-  )
-
-  let cyclic-imidate = molecule("N=C1ON(=O)c2ccc(Br)cc21")
-
-  let nitroso-amide = molecule("O=Nc1c(C(=O)N)cc(Br)cc1")
-
-  let hydroxy-azo = molecule("O=C1NN(O)C2=C1C=CC(Br)=C2")
-
-  let azoketone = molecule(
-    "O=C1N=NC2=C1C=CC(Br)=C2",
-    annotations: electron-arrows(mol => {
-      import cetz.draw: *
-      reagent(mol, "east", [OH#super[-]], offset: (0.72, 0.18))
-      electron-arrow(
-        mol,
-        "east",
-        "b0.50%",
-        from-offset: (0.48, 0.34),
-        to-offset: (0.28, 0.38),
-        controls: ((0, 0.36), (0.16, 0.5)),
-      )
-    }),
-  )
-
-  let carboxylate = molecule("O=C([O-])c1cc(Br)ccc1")
-  let product = molecule("O=C(O)c1cc(Br)ccc1")
-
-  block(breakable: false, width: 100%)[
-    #stack(
-      dir: ttb,
-      spacing: 5mm,
-      mechanism-row(
-        ("molecule", substrate),
-        ("arrow", reaction-arrow(above: [KCN], below: [EtOH / H#sub[2]O])),
-        ("molecule", sigma-adduct),
-        ("arrow", move(dy: -2.1mm, reaction-arrow(above: [cyclization]))),
-        ("molecule", cyclic-imidate),
-      ),
-      mechanism-row(
-        ("arrow", reaction-arrow(above: [ring opening])),
-        ("molecule", nitroso-amide),
-        ("arrow", reaction-arrow(above: [cyclization])),
-        ("molecule", hydroxy-azo),
-        ("arrow", reaction-arrow(above: [-H#sub[2]O])),
-        ("molecule", azoketone),
-      ),
-      align(center)[
-        #mechanism-row(
-          ("arrow", reaction-arrow(above: [OH#super[-]], below: [-N#sub[2]])),
-          ("molecule", carboxylate),
-          ("arrow", move(dy: -2mm, reaction-arrow(above: [H#super[+]]))),
-          ("molecule", product),
-        )
-      ],
-    )
-  ]
-}
-
-The mechanistic sequence follows M. Rosenblum, _The Mechanism of the von Richter Reaction_, J. Am. Chem. Soc. 82 (1960), 3796-3798, #link("https://doi.org/10.1021/ja01499a090")[doi:10.1021/ja01499a090]. Molecule-specific anchors and curved-arrow routing can be adjusted directly in the figure source.
+This transformation is discussed by M. Rosenblum, _The Mechanism of the von Richter Reaction_, J. Am. Chem. Soc. 82 (1960), 3796–3798 (#link("https://doi.org/10.1021/ja01499a090")[DOI] `10.1021/ja01499a090`). A detailed mechanistic figure should cite a chosen mechanistic model and draw its individual intermediates explicitly.
 
 == Low-Level Labels
 
@@ -1234,7 +1172,7 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
 #pagebreak(weak: true)
 #example[
   ```typ
-  #let chiral-card(title, source) = align(center)[
+  #let chiral-example(title, source) = align(center)[
     *#title*
     #v(2mm)
     #render-smiles(source, skeletal: true)
@@ -1245,14 +1183,14 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
     gutter: 8mm,
     row-gutter: 7mm,
     align: top,
-    chiral-card([Allene · `@AL1`], "NC(Br)=[C@AL1]=C(O)C"),
-    chiral-card([Square planar · `@SP2`], "[Pt@SP2](F)(Cl)(Br)I"),
-    chiral-card([Trigonal bipyramidal · `@TB5`], "[As@TB5](F)(Cl)(Br)(N)S"),
-    chiral-card([Octahedral · `@OH5`], "[Co@OH5](F)(Cl)(Br)(I)(N)S"),
+    chiral-example([Allene · `@AL1`], "NC(Br)=[C@AL1]=C(O)C"),
+    chiral-example([Square planar · `@SP2`], "[Pt@SP2](F)(Cl)(Br)I"),
+    chiral-example([Trigonal bipyramidal · `@TB5`], "[As@TB5](F)(Cl)(Br)(N)S"),
+    chiral-example([Octahedral · `@OH5`], "[Co@OH5](F)(Cl)(Br)(I)(N)S"),
   )
   ```
 ][
-  #let chiral-card(title, source) = align(center)[
+  #let chiral-example(title, source) = align(center)[
     *#title*
     #v(2mm)
     #render-smiles(source, skeletal: true)
@@ -1263,10 +1201,10 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
     gutter: 8mm,
     row-gutter: 7mm,
     align: top,
-    chiral-card([Allene · `@AL1`], "NC(Br)=[C@AL1]=C(O)C"),
-    chiral-card([Square planar · `@SP2`], "[Pt@SP2](F)(Cl)(Br)I"),
-    chiral-card([Trigonal bipyramidal · `@TB5`], "[As@TB5](F)(Cl)(Br)(N)S"),
-    chiral-card([Octahedral · `@OH5`], "[Co@OH5](F)(Cl)(Br)(I)(N)S"),
+    chiral-example([Allene · `@AL1`], "NC(Br)=[C@AL1]=C(O)C"),
+    chiral-example([Square planar · `@SP2`], "[Pt@SP2](F)(Cl)(Br)I"),
+    chiral-example([Trigonal bipyramidal · `@TB5`], "[As@TB5](F)(Cl)(Br)(N)S"),
+    chiral-example([Octahedral · `@OH5`], "[Co@OH5](F)(Cl)(Br)(I)(N)S"),
   )
 ]
 
@@ -1280,12 +1218,14 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
 #command(
   "render-mol",
   arg("data"),
+  arg(record: 1),
   arg(abbreviate: false),
   arg(skeletal: false),
   arg(dump: false),
   arg(config: (:)),
   arg(annotations: none),
   arg(show-indices: false),
+  arg(fidelity: "ignore"),
   ret: content,
 )[
   Render a molecule from raw Molfile or SDF text.
@@ -1294,6 +1234,10 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
 
   #argument("data", types: (str, bytes, "path"))[
     Raw `.mol` or `.sdf` data. Typst 0.15.0 and later may pass `path(...)` directly; older versions should pass `read(...)` output.
+  ]
+
+  #argument("record", types: int, default: 1)[
+    One-based record number for multi-record SDF input.
   ]
 
   #argument("abbreviate", types: bool, default: false)[
@@ -1309,7 +1253,9 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
   ]
 
   #argument("config", types: dictionary, default: (:))[
-    Visual configuration passed to `alchemist`.
+    Visual configuration passed to `alchemist`. The optional `ctfile` subdictionary is consumed by `molchemist` and accepts `highlight-paint`, `highlight-radius`, `highlight-thickness`, `highlight-label-padding`, `query-details`, `sgroup-stroke`, `sgroup-label-size`, `link-node-size`, and `variable-attachment-stroke`.
+
+    `highlight-radius` is the radius used for an unlabeled skeletal atom, `highlight-thickness` is the full width of a highlighted bond capsule, and `highlight-label-padding` expands the rendered glyph bounds before drawing a rounded rectangle. All three values scale with #arg[atom-sep].
   ]
 
   #argument("annotations", types: ("annotation", array, none), default: none)[
@@ -1319,6 +1265,29 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
   #argument("show-indices", types: (bool, str), default: false)[
     Debug overlay for annotation authoring. Use `true`, `"all"`, `"atoms"`, or `"bonds"`.
   ]
+
+  #argument("fidelity", types: str, default: "ignore")[
+    Use `"strict"` to reject known remaining features that are preserved by inspection but not fully depicted. `"ignore"` keeps the normal rendering behavior.
+  ]
+]
+
+#command(
+  "inspect-mol",
+  arg("data"),
+  arg(record: 1),
+  ret: dictionary,
+)[
+  Parse one Molfile/SDF record into the versioned semantic IR without reducing it to drawing commands.
+
+  #argument("data", types: (str, bytes, "path"))[
+    Raw `.mol` or `.sdf` data. Typst 0.15.0 and later may pass `path(...)` directly; older versions should pass `read(...)` output.
+  ]
+
+  #argument("record", types: int, default: 1)[
+    One-based record number for multi-record SDF input.
+  ]
+
+  The result includes `schemaVersion`, `format`, header fields, `atoms`, `bonds`, `stereoGroups`, `sgroups`, `linkNodes`, `collections`, ordered `properties`, `diagnostics`, and `rawRecord`. Atom and bond entries contain both a zero-based depiction `index` and a stable `sourceId`; atoms may contain normalized `query`, `rgroupLabels`, and `attachmentPoints`, bonds may contain `endpointSourceIds` and `attachmentMode`, and SGroups contain both normalized `kind` and original `typeCode` plus structured SAP `attachmentPoints`. A collection contains its complete `name`, normalized `kind`, atom/bond/SGroup/3D/R-group member IDs, generic `members`, and exact `rawEntry`.
 ]
 
 #command(
@@ -1414,8 +1383,26 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
   arg(anchor: "mid"),
   arg(side: "north-east"),
   arg(label-at: auto),
+  arg(label-offset: auto),
+  arg(target-offset: auto),
+  arg(target-gap: 0.2),
+  arg(label-anchor: auto),
   arg(leader: "curve"),
+  arg(leader-start: auto),
+  arg(leader-end: auto),
+  arg(leader-points: ()),
+  arg(leader-start-offset: (0, 0)),
+  arg(leader-end-offset: (0, 0)),
   arg(mark: none),
+  arg(stroke: luma(40%) + 0.35pt),
+  arg(label-size: 0.82em),
+  arg(label-gap: 0.14),
+  arg(label-inset: 2.2pt),
+  arg(label-radius: 3pt),
+  arg(label-fill: white),
+  arg(label-stroke: 0.35pt + luma(70%)),
+  arg(boxed: false),
+  arg(name: none),
   ret: "annotation",
 )[
   Build an external label with a leader line.
@@ -1426,6 +1413,10 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
 
   #argument("label", types: content)[
     Label content.
+  ]
+
+  #argument("anchor", types: str, default: "mid")[
+    Anchor used to resolve #arg[at].
   ]
 
   #argument("side", types: str, default: "north-east")[
@@ -1447,6 +1438,8 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
   #argument("target-gap", types: float, default: 0.2)[
     Clearance from the target when #arg[leader-end] is automatic.
   ]
+
+  `label-offset` and `target-offset` adjust automatic placement. `leader-start`, `leader-end`, `leader-points`, `leader-start-offset`, and `leader-end-offset` provide exact routing. `mark` and `stroke` style the line. `label-size`, `label-gap`, `label-inset`, `label-radius`, `label-fill`, `label-stroke`, and `boxed` style the label; `name` assigns an optional CeTZ object name.
 ]
 
 #command(
@@ -1454,43 +1447,72 @@ Extended OpenSMILES chirality classes are rendered geometrically when their topo
   arg("from"),
   arg("to"),
   arg(label: none),
+  arg(from-anchor: "mid"),
+  arg(to-anchor: "mid"),
+  arg(label-anchor: "south"),
+  arg(label-offset: (0, 0.45)),
   arg(mark: (end: ">>", fill: black)),
+  arg(stroke: black),
+  arg(boxed: false),
+  arg(label-size: 0.85em),
+  arg(label-fill: white),
+  arg(label-stroke: 0.35pt + luma(72%)),
+  arg(label-inset: 2pt),
+  arg(label-radius: 2pt),
+  arg(name: none),
   ret: "annotation",
 )[
-  Build a free arrow overlay.
+  Build a free arrow overlay. `from-anchor` and `to-anchor` resolve named endpoints; `label-anchor` and `label-offset` position the optional label. `mark` and `stroke` style the arrow. `boxed`, `label-size`, `label-fill`, `label-stroke`, `label-inset`, and `label-radius` style its label; `name` assigns an optional CeTZ object name.
 ]
 
 #command(
   "label-annotation",
   arg("at"),
   arg("label"),
+  arg(anchor: "mid"),
+  arg(label-anchor: "south"),
   arg(offset: (0, 0.45)),
+  arg(boxed: false),
+  arg(label-size: 0.85em),
+  arg(label-fill: white),
+  arg(label-stroke: 0.35pt + luma(72%)),
+  arg(label-inset: 2pt),
+  arg(label-radius: 2pt),
+  arg(name: none),
   ret: "annotation",
 )[
-  Build a free text label overlay without a leader line.
+  Build a free text label overlay without a leader line. `anchor`, `label-anchor`, and `offset` control placement. `boxed`, `label-size`, `label-fill`, `label-stroke`, `label-inset`, and `label-radius` style the label; `name` assigns an optional CeTZ object name.
 ]
 
-#command("cetz-annotation", arg("body"), ret: "annotation")[
+#command("cetz-annotation", arg("body"), arg(name: none), ret: "annotation")[
   Run custom CeTZ code after the molecule is drawn.
 
   #argument("body", types: function)[
     Function receiving the generated molecule name.
   ]
+
+  #argument("name", types: (str, none), default: none)[
+    Optional name retained in the annotation descriptor.
+  ]
 ]
 
 = Limitations
 
+- Reaction SMILES/RXN input, atom mapping, automatic reaction-center detection/highlighting, and MOL2 input are intentionally deferred to a later release. Reaction schemes in this manual are manual Typst/CeTZ composition of separate molecule renderings.
+- User-defined and unknown internal COLLECTIONs have no standard default glyph and remain inspection-only. `MDLV30/HILITE` currently depicts atom and bond members; SGroup, 3D-object, R-group, and generic members are preserved and reported by strict fidelity.
+- Unknown future SGroup type codes are preserved for inspection but are not given an invented bracket convention; strict fidelity reports them. Multi-atom `SUP` groups without a usable label or with overlapping membership are preserved rather than contracted.
+- `M  APO` and `ATTCHPT` are R-group-member properties. Main-CTAB occurrences are retained for inspection but rejected by strict fidelity; full nested R-group member rendering is not yet implemented.
 - Full mode can become crowded for large molecules because explicit hydrogens and atom labels occupy real page space. Prefer abbreviated or skeletal mode, or increase #arg[atom-sep].
 - A valid Molfile/SDF 2D layout is preserved even when its full-mode labels are crowded. Automatic relayout is limited to collapsed or numerically unstable XY coordinates.
 - SMILES and unusable SDF coordinates are laid out with Coordgen. The result is deterministic for a given bundled plugin, but it may differ from an external chemical drawing program.
 - Relayout preserves explicit SDF wedge, parity, and enhanced-stereo metadata. It does not infer stereochemistry solely from 3D coordinates.
 - Extended-chirality layout rotates ligand branches around a stereocenter. Invalid or cyclic topology may therefore fall back to a textual chirality annotation when its branches cannot be moved independently.
 - Annotation helpers cover common callouts and arrows, not automatic collision-free figure composition. For complex layouts, use @cmd:cetz-annotation[-] or dump the generated `alchemist` code.
-- Rendering CI catches compilation failures and package/CLI source divergence on the listed Typst versions. It is not a pixel-snapshot guarantee, so review fonts and final PDF appearance for publication output.
+- Rendering CI catches compilation failures and package/CLI source divergence on the listed Typst versions. The highlight corpus additionally checks atom/bond membership, SVG subpath topology, circle-versus-rounded-rectangle selection, and non-zero compound fills. This is not a general pixel-snapshot guarantee, so review fonts and final PDF appearance for publication output.
 - Maintainers can run `scripts/check-pubchem-visual-regression.py` with the ignored local PubChem corpus for opt-in pixel regression checks; its baseline is machine-local and is not distributed with the package.
 
 = License and Dependencies
 
-`molchemist` is distributed under the MIT license. Molfile / SDF parsing is powered by `sdfrust`; SMILES parsing is based on `opensmiles`; SMILES 2D coordinate generation uses `CoordgenLibs`; rendering is handled by `alchemist` and CeTZ. See the third-party notices distributed with the package for full license details.
+The molchemist-authored Typst source is distributed under the MIT License. The published package also embeds precompiled WASM components, so its manifest uses the aggregate SPDX expression `MIT AND BSD-3-Clause AND Apache-2.0 AND (Apache-2.0 WITH LLVM-exception)`. Molfile / SDF parsing is powered by `sdfrust`; SMILES parsing is based on `opensmiles`; SMILES 2D coordinate generation uses `CoordgenLibs`; rendering is handled by `alchemist` and CeTZ. See the distributed third-party notices for the complete file-to-license mapping and license texts.
 
 The example SDF files and rendered example images are attributed separately from the package code. In particular, this manual includes PubChem-derived example structures such as #link("https://pubchem.ncbi.nlm.nih.gov/compound/241")[CID 241]. See `THIRD_PARTY_NOTICES.md` and `docs/assets/README.md` for source URLs and the relevant NCBI data-usage policy.

@@ -87,6 +87,27 @@ For a multi-record SDF, select a one-based record with `--record`:
 molchemist dump compounds.sdf --record 3
 ```
 
+Inspect the selected record as semantic JSON when downstream processing needs data that is not part of the drawing:
+
+```sh
+molchemist inspect compounds.sdf --record 3
+```
+
+Inspection preserves the header, stable source atom/bond IDs, enhanced stereo groups, SGroups with original type codes, complete COLLECTION names and member lists, normalized V2000/V3000 query metadata, duplicate and multiline SDF properties in source order, the exact selected record, and diagnostics for remaining depiction gaps. V3000 `sourceId` values are the original CTAB IDs; V2000 uses one-based source positions. Pass `--compact` for single-line JSON.
+
+`dump` uses `--fidelity warn` by default. Warnings go to standard error without contaminating generated source on standard output. Use `--fidelity strict` to reject any known unsupported depiction feature or `--fidelity ignore` to preserve the earlier silent behavior.
+
+Generated source depicts CTfile atom lists and query constraints, R-group labels, ring/chain bond topology, SGroup brackets and labels, contracted multi-atom superatoms, variable-attachment bonds, link nodes, and V3000 atom/bond HILITE collections. Contracted superatoms reconnect crossing bonds at a labelled graph node, use explicit SAP atoms for placement, and project highlight membership onto the contracted glyph. Arbitrary user-defined collections and non-atom/bond HILITE members remain inspection-only and are diagnostic in strict mode. The same overlay code is included in `--standalone` output. Reaction-center flags remain diagnostic until the reaction rendering stage is implemented.
+
+Highlight behavior has dedicated semantic and SVG-shape regressions. The corpus separates atom-only, long-query-glyph, bond-only, connected, and disconnected selections, and also includes RDKit/Bingo's real `v3k.crash1.mol`. Run them with:
+
+```sh
+cargo test -p molchemist-cli --test cli highlight_
+cargo test -p molchemist-cli --test cli local_typst_package_renders_highlight_shape_corpus_to_svg -- --ignored --exact
+```
+
+The same five cases are shown with their source directly in `package/docs/documentation.typ`.
+
 Each selected Molfile/SDF record is detected as V2000 or V3000. Empty structures, malformed records, non-finite coordinates, and out-of-range record numbers are reported as conversion errors.
 
 Extended SDF bond orders are preserved in generated source: aromatic and query bonds use distinct dashed/dotted forms, any and `either` bonds are wavy, coordination bonds retain their arrow direction, hydrogen bonds are dotted, and undefined double-bond geometry is crossed. Wedge/dash bonds to explicit hydrogen remain visible in abbreviated and skeletal modes. SDF atom parity, enhanced stereo groups, and extended OpenSMILES chirality classes are retained as annotations in generated source. The generated helpers are included automatically, including in `--standalone` output.
@@ -105,7 +126,7 @@ The three rendering modes match the Typst API:
 
 `--format auto` first uses an explicit input kind, then the file extension, then the content. Supported extensions are `.mol`, `.sdf`, `.smi`, and `.smiles`. Pass `--format` when piped or extensionless input is ambiguous.
 
-Run `molchemist dump --help` for the complete option list. Generated source is written exclusively to standard output; diagnostics are written to standard error, so shell redirection is safe.
+Run `molchemist dump --help` or `molchemist inspect --help` for the complete option list. Generated source and inspection JSON are written exclusively to standard output; diagnostics are written to standard error, so shell redirection is safe.
 
 ## License
 

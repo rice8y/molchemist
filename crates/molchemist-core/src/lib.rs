@@ -15,19 +15,30 @@ pub use parser::*;
 
 mod engine;
 mod formatter;
+mod semantic;
 
 #[cfg(feature = "native-layout")]
 mod native_layout;
 
 pub use engine::{
-    sdf_record_to_ast, sdf_record_to_ast_with_coords, sdf_record_to_commands,
-    sdf_record_to_commands_with_coords, sdf_record_to_layout_input, sdf_to_ast, sdf_to_commands,
-    smiles_layout_input, smiles_to_ast, smiles_to_commands_with_coords,
-    smiles_to_full_layout_input, smiles_to_layout_input, AtomLabel, Command, LinkData, RenderMode,
+    inspect_sdf_record, sdf_record_to_ast, sdf_record_to_ast_with_coords, sdf_record_to_commands,
+    sdf_record_to_commands_with_coords, sdf_record_to_inspection_cbor, sdf_record_to_layout_input,
+    sdf_to_ast, sdf_to_commands, smiles_layout_input, smiles_to_ast,
+    smiles_to_commands_with_coords, smiles_to_full_layout_input, smiles_to_layout_input, AtomLabel,
+    Command, CtfileAtomAnnotationDepiction, CtfileAtomQueryDepiction, CtfileBondQueryDepiction,
+    CtfileHighlightBond, CtfileHighlightDepiction, CtfilePoint, CtfileSGroupDepiction,
+    CtfileVariableAttachmentDepiction, LinkData, RenderMode,
 };
 pub use formatter::{
     format_alchemist, format_standalone, format_standalone_code, StandaloneOptions,
     DEFAULT_ALCHEMIST_IMPORT,
+};
+pub use semantic::{
+    ChemicalAtom, ChemicalAtomQuery, ChemicalBond, ChemicalBondOrder, ChemicalBondStereo,
+    ChemicalCollection, ChemicalFormat, ChemicalLinkNode, ChemicalLinkNodeConnection,
+    ChemicalRecord, ChemicalSGroup, ChemicalSGroupAttachmentPoint, ChemicalStereoGroup,
+    DiagnosticSeverity, FidelityDiagnostic, FidelityPolicy, SdfProperty,
+    CHEMICAL_RECORD_SCHEMA_VERSION,
 };
 
 #[cfg(feature = "native-layout")]

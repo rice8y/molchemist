@@ -155,7 +155,25 @@
 }
 
 #let _structured-atom-label(atom) = {
-  let base = [#atom.symbol]
+  let rgroup-label = atom.at("rgroupLabel", default: none)
+  let symbol = if atom.at("querySymbol", default: false) {
+    let query-symbol = if atom.at("queryNegated", default: false) {
+      "!" + atom.symbol
+    } else {
+      atom.symbol
+    }
+    text(size: 0.62em)[#query-symbol]
+  } else if rgroup-label == none {
+    [#atom.symbol]
+  } else {
+    let subscript = [#rgroup-label]
+    math.attach([R], b: subscript, t: std.hide(subscript))
+  }
+  let base = if atom.at("hidden", default: false) {
+    std.hide(symbol)
+  } else {
+    symbol
+  }
   let hydrogen-count = atom.at("hydrogenCount", default: 0)
   if hydrogen-count == 1 {
     base += [H]
@@ -738,6 +756,331 @@
   }
 }
 
+#let _ctfile-atom-index(name) = {
+  if type(name) == str and name.starts-with("a") {
+    int(name.slice(1))
+  } else {
+    none
+  }
+}
+
+#let _collect-ctfile-atom-metadata(cmds, current-atom: none) = {
+  let atoms = (:)
+  let centers = (:)
+  let labels = (:)
+  let current-atom = current-atom
+  let pending-bond = none
+
+  for cmd in cmds {
+    if cmd.type == "fragment" {
+      let atom-index = _ctfile-atom-index(cmd.name)
+      if atom-index == none {
+        pending-bond = none
+        continue
+      }
+
+      let key = str(atom-index)
+      atoms.insert(key, true)
+      labels.insert(
+        key,
+        if cmd.element == "" {
+          none
+        } else if "atom" in cmd {
+          _structured-atom-label(cmd.atom)
+        } else {
+          cmd.element
+        },
+      )
+      if current-atom != none and pending-bond != none {
+        let current-key = str(current-atom)
+        if current-key not in centers {
+          centers.insert(current-key, pending-bond + "-start-anchor")
+        }
+        if key not in centers {
+          centers.insert(key, pending-bond + "-end-anchor")
+        }
+      }
+      current-atom = atom-index
+      pending-bond = none
+    } else if cmd.type == "bond" {
+      pending-bond = cmd.name
+    } else if cmd.type == "branch" {
+      let nested = _collect-ctfile-atom-metadata(cmd.body, current-atom: current-atom)
+      atoms = atoms + nested.atoms
+      centers = nested.centers + centers
+      labels = labels + nested.labels
+    } else if cmd.type == "component-break" {
+      current-atom = none
+      pending-bond = none
+    }
+  }
+
+  (atoms: atoms, centers: centers, labels: labels)
+}
+
+#let _ctfile-atom-center(atom-index, atom-centers) = {
+  let key = str(atom-index)
+  (
+    name: _structure-name,
+    anchor: atom-centers.at(key, default: "a" + key + ".0.mid"),
+  )
+}
+
+#let _ctfile-point(point, base-sep, atom-centers) = (
+  rel: (
+    base-sep * point.offset.at(0),
+    base-sep * point.offset.at(1),
+  ),
+  to: _ctfile-atom-center(point.atomIndex, atom-centers),
+)
+
+#let _ctfile-highlight-path(
+  highlights,
+  base-sep,
+  atom-centers,
+  atom-labels,
+  paint,
+  atom-radius,
+  bond-thickness,
+  label-padding,
+) = {
+  cetz.draw.get-ctx(cetz-ctx => {
+    let atom-radius = utils.convert-length(cetz-ctx, base-sep * atom-radius)
+    let bond-radius = utils.convert-length(cetz-ctx, base-sep * bond-thickness) / 2
+    let label-padding = utils.convert-length(cetz-ctx, base-sep * label-padding)
+    cetz.draw.compound-path(
+      fill: paint,
+      stroke: none,
+      fill-rule: "non-zero",
+      {
+        for highlight in highlights {
+          for bond in highlight.bonds {
+            let (_, start) = cetz.coordinate.resolve(
+              cetz-ctx,
+              _ctfile-atom-center(bond.atom1Index, atom-centers),
+            )
+            let (_, end) = cetz.coordinate.resolve(
+              cetz-ctx,
+              _ctfile-atom-center(bond.atom2Index, atom-centers),
+            )
+            let dx = end.at(0) - start.at(0)
+            let dy = end.at(1) - start.at(1)
+            let length = calc.sqrt(dx * dx + dy * dy)
+            if length > 0 {
+              let nx = -dy / length * bond-radius
+              let ny = dx / length * bond-radius
+              // CeTZ circle and rounded-rect paths wind counter-clockwise.
+              // Keep the bond polygon in the same direction so overlaps add
+              // instead of cancelling under the non-zero fill rule.
+              cetz.draw.line(
+                (start.at(0) + nx, start.at(1) + ny),
+                (start.at(0) - nx, start.at(1) - ny),
+                (end.at(0) - nx, end.at(1) - ny),
+                (end.at(0) + nx, end.at(1) + ny),
+                close: true,
+              )
+              cetz.draw.circle(start, radius: bond-radius)
+              cetz.draw.circle(end, radius: bond-radius)
+            }
+          }
+          for atom-index in highlight.atomIndexes {
+            let (_, center) = cetz.coordinate.resolve(
+              cetz-ctx,
+              _ctfile-atom-center(atom-index, atom-centers),
+            )
+            let label = atom-labels.at(str(atom-index), default: none)
+            if label == none {
+              cetz.draw.circle(center, radius: atom-radius)
+            } else {
+              let prefix = "a" + str(atom-index) + ".0."
+              let (_, west) = cetz.coordinate.resolve(
+                cetz-ctx,
+                (name: _structure-name, anchor: prefix + "west"),
+              )
+              let (_, east) = cetz.coordinate.resolve(
+                cetz-ctx,
+                (name: _structure-name, anchor: prefix + "east"),
+              )
+              let (_, north) = cetz.coordinate.resolve(
+                cetz-ctx,
+                (name: _structure-name, anchor: prefix + "north"),
+              )
+              let (_, south) = cetz.coordinate.resolve(
+                cetz-ctx,
+                (name: _structure-name, anchor: prefix + "south"),
+              )
+              let width = east.at(0) - west.at(0)
+              let height = north.at(1) - south.at(1)
+              if width <= atom-radius and height <= atom-radius {
+                cetz.draw.circle(center, radius: atom-radius)
+              } else {
+                cetz.draw.rect(
+                  (
+                    west.at(0) - label-padding,
+                    south.at(1) - label-padding,
+                  ),
+                  (
+                    east.at(0) + label-padding,
+                    north.at(1) + label-padding,
+                  ),
+                  radius: label-padding,
+                )
+              }
+            }
+          }
+        }
+      },
+    )
+  })
+}
+
+#let _render-ctfile-overlays(cmds, base-sep, atom-centers, atom-labels, config: (:)) = {
+  let ctfile-config = config.at("ctfile", default: (:))
+  let highlight-paint = ctfile-config.at(
+    "highlight-paint",
+    default: rgb("#ffd43b").transparentize(45%),
+  )
+  let highlight-radius = ctfile-config.at("highlight-radius", default: 0.28)
+  let highlight-thickness = ctfile-config.at("highlight-thickness", default: 0.16)
+  let highlight-label-padding = ctfile-config.at(
+    "highlight-label-padding",
+    default: highlight-thickness / 2,
+  )
+  let sgroup-stroke = ctfile-config.at("sgroup-stroke", default: black)
+  let sgroup-label-size = ctfile-config.at("sgroup-label-size", default: 0.8em)
+  let link-node-size = ctfile-config.at("link-node-size", default: 0.82em)
+  let variable-attachment-stroke = ctfile-config.at(
+    "variable-attachment-stroke",
+    default: 0.7pt + luma(8%),
+  )
+
+  for cmd in cmds {
+    if cmd.type != "ctfile" {
+      continue
+    }
+    if cmd.highlights.len() > 0 {
+      cetz.draw.on-layer(-1, {
+        _ctfile-highlight-path(
+          cmd.highlights,
+          base-sep,
+          atom-centers,
+          atom-labels,
+          highlight-paint,
+          highlight-radius,
+          highlight-thickness,
+          highlight-label-padding,
+        )
+      })
+    }
+    for group in cmd.sgroups {
+      let name = "molchemist-sgroup-" + str(group.id)
+      let left-top = _ctfile-point(group.leftTop, base-sep, atom-centers)
+      let left-bottom = _ctfile-point(group.leftBottom, base-sep, atom-centers)
+      let right-top = _ctfile-point(group.rightTop, base-sep, atom-centers)
+      let right-bottom = _ctfile-point(group.rightBottom, base-sep, atom-centers)
+      cetz.draw.line(left-top, left-bottom, name: name + "-left", stroke: sgroup-stroke)
+      cetz.draw.line(
+        left-top,
+        (rel: (base-sep * 0.18, 0pt), to: left-top),
+        stroke: sgroup-stroke,
+      )
+      cetz.draw.line(
+        left-bottom,
+        (rel: (base-sep * 0.18, 0pt), to: left-bottom),
+        stroke: sgroup-stroke,
+      )
+      cetz.draw.line(right-top, right-bottom, name: name + "-right", stroke: sgroup-stroke)
+      cetz.draw.line(
+        right-top,
+        (rel: (base-sep * -0.18, 0pt), to: right-top),
+        stroke: sgroup-stroke,
+      )
+      cetz.draw.line(
+        right-bottom,
+        (rel: (base-sep * -0.18, 0pt), to: right-bottom),
+        stroke: sgroup-stroke,
+      )
+      if "label" in group and group.label != none {
+        cetz.draw.content(
+          (rel: (base-sep * 0.01, base-sep * 0.035), to: right-bottom),
+          text(size: sgroup-label-size)[#group.label],
+          anchor: "north-west",
+        )
+      }
+    }
+    for query in cmd.atomQueries {
+      if query.label != "" {
+        if ctfile-config.at("query-details", default: false) {
+          let constraint-lines = query.at("constraintLines", default: (query.label,))
+          let constraint-content = constraint-lines.map(line =>
+            text(size: 0.43em, fill: luma(25%))[#line]
+          )
+          cetz.draw.content(
+            (
+              rel: (0pt, base-sep * -0.36),
+              to: _ctfile-atom-center(query.atomIndex, atom-centers),
+            ),
+            box(
+              inset: (x: 2pt, y: 1pt),
+              radius: 1.5pt,
+              fill: white,
+              stroke: 0.25pt + luma(78%),
+              stack(dir: ttb, spacing: 0.04em, ..constraint-content),
+            ),
+            anchor: "north",
+          )
+        } else if query.at("compactLabel", default: "") != "" {
+          cetz.draw.content(
+            (
+              rel: (0pt, base-sep * -0.36),
+              to: _ctfile-atom-center(query.atomIndex, atom-centers),
+            ),
+            text(size: 0.44em, fill: luma(38%))[#query.compactLabel],
+            anchor: "north",
+          )
+        }
+      }
+    }
+    for query in cmd.bondQueries {
+      cetz.draw.content(
+        (
+          rel: (0pt, base-sep * 0.2),
+          to: (name: _structure-name, anchor: "b" + str(query.bondIndex) + ".50%"),
+        ),
+        text(size: 0.56em, fill: luma(32%))[#query.label],
+        anchor: "center",
+      )
+    }
+    for attachment in cmd.at("variableAttachments", default: ()) {
+      let stroke = if attachment.mode == "ANY" {
+        _molchemist-dashed-stroke(variable-attachment-stroke, "dotted")
+      } else {
+        variable-attachment-stroke
+      }
+      for atom-index in attachment.endpointAtomIndexes {
+        cetz.draw.line(
+          (name: _structure-name, anchor: "b" + str(attachment.bondIndex) + ".50%"),
+          _ctfile-atom-center(atom-index, atom-centers),
+          stroke: stroke,
+        )
+      }
+    }
+    for annotation in cmd.at("atomAnnotations", default: ()) {
+      cetz.draw.content(
+        (
+          rel: (0pt, base-sep * 0.3),
+          to: _ctfile-atom-center(annotation.atomIndex, atom-centers),
+        ),
+        text(
+          size: link-node-size,
+          fill: luma(18%),
+        )[#annotation.label],
+        anchor: "center",
+      )
+    }
+  }
+}
+
 #let _render-overlay-annotations(annotations) = {
   for (idx, annotation) in _normalized-annotations(annotations).enumerate() {
     let kind = annotation.at("type", default: "arrow")
@@ -902,10 +1245,22 @@
 }
 
 #let _render-graphic(ast, base-sep, config: (:), overlay-annotations: none, show-indices: false) = {
+  let skeleton-config = config
+  let atom-metadata = _collect-ctfile-atom-metadata(ast)
+  if "ctfile" in skeleton-config {
+    let _ = skeleton-config.remove("ctfile")
+  }
   cetz.canvas({
-    draw-skeleton(config: config, name: _structure-name, {
-      _render-ast(ast, base-sep, config: config)
+    draw-skeleton(config: skeleton-config, name: _structure-name, {
+      _render-ast(ast, base-sep, config: skeleton-config)
     })
+    _render-ctfile-overlays(
+      ast,
+      base-sep,
+      atom-metadata.centers,
+      atom-metadata.labels,
+      config: config,
+    )
     _render-index-labels(ast, show-indices)
     _render-overlay-annotations(overlay-annotations)
   })
@@ -925,6 +1280,35 @@
   }
 }
 
+/// Inspect one Molfile/SDF record without discarding non-depiction data.
+///
+/// The returned dictionary contains stable source IDs, atoms, bonds, enhanced
+/// stereo groups, SGroups, collections, ordered SDF properties, the exact raw
+/// record, and diagnostics for features the current renderer cannot depict.
+///
+/// - data (any): Molfile/SDF text, bytes, or a Typst 0.15.0+ path.
+/// - record (int): One-based record number for multi-record SDF input.
+/// -> dictionary
+#let inspect-mol(data, record: 1) = {
+  if type(record) != int or record < 1 {
+    panic("record must be a positive integer")
+  }
+  cbor(mol-plugin.sdf_record_to_inspection(
+    _mol-data-to-bytes(data),
+    bytes(str(record)),
+  ))
+}
+
+#let _check-fidelity(inspection, fidelity) = {
+  if fidelity != "ignore" and fidelity != "strict" {
+    panic("fidelity must be \"ignore\" or \"strict\"")
+  }
+  if fidelity == "strict" and inspection.diagnostics.len() > 0 {
+    let messages = inspection.diagnostics.map(diagnostic => diagnostic.message)
+    panic("faithful depiction is not available: " + messages.join("; "))
+  }
+}
+
 /// Render a molecule from Molfile or SDF data.
 ///
 /// Input coordinates are preserved when they form a usable 2D layout. Records
@@ -937,11 +1321,12 @@
 /// - abbreviate (bool): Fold common hydrogens and terminal groups into labels.
 /// - skeletal (bool): Draw a skeletal formula; overrides `abbreviate`.
 /// - dump (bool): Show generated Alchemist source instead of rendering.
-/// - config (dictionary): Visual configuration passed to Alchemist.
+/// - config (dictionary): Alchemist configuration plus optional `ctfile` overlay styling.
 /// - annotations (dictionary, array, none): Overlay annotation or annotation array.
 /// - show-indices (bool, str): Show `"atoms"`, `"bonds"`, or `"all"` indices for authoring.
+/// - fidelity (str): `"ignore"` or `"strict"` handling of remaining depiction gaps.
 /// -> content
-#let render-mol(data, record: 1, abbreviate: false, skeletal: false, dump: false, config: (:), annotations: none, show-indices: false) = {
+#let render-mol(data, record: 1, abbreviate: false, skeletal: false, dump: false, config: (:), annotations: none, show-indices: false, fidelity: "ignore") = {
   if type(record) != int or record < 1 {
     panic("record must be a positive integer")
   }
@@ -956,6 +1341,9 @@
   let base-sep = config.at("atom-sep", default: 3em)
   let mol-data = _mol-data-to-bytes(data)
   let record-data = bytes(str(record))
+  if fidelity != "ignore" {
+    _check-fidelity(cbor(mol-plugin.sdf_record_to_inspection(mol-data, record-data)), fidelity)
+  }
   let layout-input = mol-plugin.sdf_record_to_layout_input(mol-data, record-data)
   let fallback-coords = if layout-input.len() > 0 {
     smiles-plugin.layout_coordinates(layout-input)
