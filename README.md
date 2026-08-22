@@ -2,6 +2,8 @@
 
 **molchemist** renders chemical structures in Typst from Molfile/SDF data or SMILES. It preserves usable input coordinates and uses a Rust/WASM layout plugin when a 2D layout must be generated.
 
+Molfile/SDF parsing is powered by [`sdfrust`](https://github.com/hfooladi/sdfrust), SMILES parsing by [`opensmiles`](https://crates.io/crates/opensmiles), SMILES and fallback SDF 2D coordinate generation by [`CoordgenLibs`](https://github.com/schrodinger/coordgenlibs), and final Typst drawing by [`alchemist`](https://github.com/Typsium/alchemist). The Rust/WASM components connect these libraries and preserve chemical semantics across parsing, layout, and rendering.
+
 ## Quick start
 
 This SDF example uses the bundled PubChem record for CID 93406:
@@ -96,7 +98,7 @@ These commands use the same benzene, melatonin, and RDKit/ACD Labs records shown
 
 ## Documentation
 
-The [complete manual](package/docs/documentation.pdf) contains the API reference, CTfile fidelity tables, sample code with corresponding typeset output, configuration details, and CLI workflows. Its editable source is [`documentation.typ`](package/docs/documentation.typ).
+The [complete manual](package/docs/documentation.pdf) contains the API reference, CTfile fidelity tables, sample code with corresponding typeset output, configuration details, and CLI workflows.
 
 Dependency licenses and example-data provenance are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). PubChem data usage is described by the [NCBI Website and Data Usage Policies](https://www.ncbi.nlm.nih.gov/home/about/policies/).
 
