@@ -20,6 +20,8 @@ struct Cli {
 enum Command {
     /// Dump Alchemist Typst code for one molecule.
     Dump(DumpArgs),
+    /// Inspect one Molfile/SDF record as loss-aware semantic JSON.
+    Inspect(InspectArgs),
 }
 
 #[derive(Args)]
@@ -71,6 +73,37 @@ struct DumpArgs {
     /// Number of spaces used for each indentation level.
     #[arg(long, default_value_t = 2, value_parser = parse_indent)]
     indent: usize,
+
+    /// Handling of parsed features that the current renderer cannot depict faithfully.
+    #[arg(long, value_enum, default_value_t = FidelityMode::Warn)]
+    fidelity: FidelityMode,
+}
+
+#[derive(Args)]
+struct InspectArgs {
+    /// Molfile/SDF input file. Use '-' or omit it to read standard input.
+    #[arg(value_name = "INPUT", conflicts_with = "text")]
+    input: Option<PathBuf>,
+
+    /// Read Molfile/SDF content directly from this argument.
+    #[arg(long, value_name = "TEXT", conflicts_with = "input")]
+    text: Option<String>,
+
+    /// Input format. Auto uses the file extension, then content.
+    #[arg(short, long, value_enum, default_value_t = InputFormat::Auto)]
+    format: InputFormat,
+
+    /// One-based record number for a multi-record SDF input.
+    #[arg(long, default_value = "1")]
+    record: NonZeroUsize,
+
+    /// Write JSON to this file instead of standard output.
+    #[arg(short, long, value_name = "PATH")]
+    output: Option<PathBuf>,
+
+    /// Emit compact JSON instead of indented JSON.
+    #[arg(long)]
+    compact: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -88,6 +121,14 @@ enum Mode {
     Full,
     Abbreviate,
     Skeletal,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+enum FidelityMode {
+    Ignore,
+    #[default]
+    Warn,
+    Strict,
 }
 
 impl From<Mode> for RenderMode {
@@ -119,6 +160,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Dump(args) => dump(args),
+        Command::Inspect(args) => inspect(args),
     }
 }
 
@@ -128,6 +170,15 @@ fn dump(args: DumpArgs) -> Result<(), String> {
     let mode = args.mode.into();
     let mut generator = Generator::new()
         .map_err(|error| format!("could not initialize the conversion engine: {error}"))?;
+
+    if args.fidelity != FidelityMode::Ignore
+        && matches!(format, InputFormat::Mol | InputFormat::Sdf)
+    {
+        let inspection = generator
+            .inspect_sdf_record_json(&input.content, args.record.get(), false)
+            .map_err(|error| format!("failed to inspect {format}: {error}"))?;
+        apply_fidelity_policy(&inspection, args.fidelity)?;
+    }
 
     let generated = match format {
         InputFormat::Mol => {
@@ -168,6 +219,27 @@ fn dump(args: DumpArgs) -> Result<(), String> {
     write_output(args.output.as_deref(), generated.as_bytes())
 }
 
+fn inspect(args: InspectArgs) -> Result<(), String> {
+    let input = read_inspect_input(&args)?;
+    let format = detect_format(&input, args.format)?;
+    match format {
+        InputFormat::Mol => require_first_record(args.record, "Molfile")?,
+        InputFormat::Sdf => {}
+        InputFormat::Smiles => {
+            return Err("inspect currently accepts Molfile or SDF input, not SMILES".to_string())
+        }
+        InputFormat::Auto => unreachable!("auto format is resolved before inspection"),
+    }
+
+    let mut generator = Generator::new()
+        .map_err(|error| format!("could not initialize the inspection engine: {error}"))?;
+    let mut json = generator
+        .inspect_sdf_record_json(&input.content, args.record.get(), !args.compact)
+        .map_err(|error| format!("failed to inspect {format}: {error}"))?;
+    json.push('\n');
+    write_output(args.output.as_deref(), json.as_bytes())
+}
+
 fn read_input(args: &DumpArgs) -> Result<Input, String> {
     if let Some(smiles) = &args.smiles {
         return Ok(Input {
@@ -206,6 +278,83 @@ fn read_input(args: &DumpArgs) -> Result<Input, String> {
         path: None,
         explicit_smiles: false,
     })
+}
+
+fn read_inspect_input(args: &InspectArgs) -> Result<Input, String> {
+    if let Some(text) = &args.text {
+        return Ok(Input {
+            content: text.clone(),
+            path: None,
+            explicit_smiles: false,
+        });
+    }
+
+    if let Some(path) = &args.input {
+        if path != Path::new("-") {
+            let content = fs::read_to_string(path)
+                .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+            return Ok(Input {
+                content,
+                path: Some(path.clone()),
+                explicit_smiles: false,
+            });
+        }
+    }
+
+    let mut content = String::new();
+    io::stdin()
+        .read_to_string(&mut content)
+        .map_err(|error| format!("could not read standard input: {error}"))?;
+    Ok(Input {
+        content,
+        path: None,
+        explicit_smiles: false,
+    })
+}
+
+fn apply_fidelity_policy(inspection: &str, policy: FidelityMode) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_str(inspection)
+        .map_err(|error| format!("inspection engine returned invalid JSON: {error}"))?;
+    let diagnostics = value
+        .get("diagnostics")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "inspection engine omitted diagnostics".to_string())?;
+    if diagnostics.is_empty() || policy == FidelityMode::Ignore {
+        return Ok(());
+    }
+
+    let messages = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let code = diagnostic
+                .get("code")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("fidelity");
+            let message = diagnostic
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("the input contains a feature that is not depicted faithfully");
+            (code, message)
+        })
+        .collect::<Vec<_>>();
+
+    match policy {
+        FidelityMode::Ignore => Ok(()),
+        FidelityMode::Warn => {
+            for (code, message) in messages {
+                eprintln!("warning[{code}]: {message}");
+            }
+            Ok(())
+        }
+        FidelityMode::Strict => Err(format!(
+            "faithful depiction is not available: {}",
+            messages
+                .iter()
+                .map(|(_, message)| *message)
+                .collect::<Vec<_>>()
+                .join("; ")
+        )),
+    }
 }
 
 fn detect_format(input: &Input, requested: InputFormat) -> Result<InputFormat, String> {

@@ -17,6 +17,11 @@ pub fn sdf_record_to_ast(
 }
 
 #[wasm_func]
+pub fn sdf_record_to_inspection(sdf_data: &[u8], record: &[u8]) -> Result<Vec<u8>, String> {
+    molchemist_core::sdf_record_to_inspection_cbor(sdf_data, parse_record(record)?)
+}
+
+#[wasm_func]
 pub fn sdf_record_to_layout_input(sdf_data: &[u8], record: &[u8]) -> Result<Vec<u8>, String> {
     molchemist_core::sdf_record_to_layout_input(sdf_data, parse_record(record)?)
 }

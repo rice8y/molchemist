@@ -1,6 +1,7 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use crate::{AtomLabel, Command, LinkData};
+use crate::{AtomLabel, Command, CtfilePoint, LinkData};
 
 pub const DEFAULT_ALCHEMIST_IMPORT: &str = "@preview/alchemist:0.2.0";
 
@@ -117,6 +118,67 @@ const EXTENDED_BOND_DEFINITIONS: &str = r#"#import "@preview/cetz:0.5.2"
 
 "#;
 
+const CTFILE_DEFINITIONS: &str = r#"
+#let _molchemist-atom-center(centers, index) = centers.at(index)
+
+#let _molchemist-highlight-path(bonds, atoms, centers, labels, paint) = {
+  cetz.draw.get-ctx(cetz-ctx => {
+    let atom-radius = utils.convert-length(cetz-ctx, base-sep * 0.28)
+    let bond-radius = utils.convert-length(cetz-ctx, base-sep * 0.08)
+    let label-padding = bond-radius
+    cetz.draw.compound-path(fill: paint, stroke: none, fill-rule: "non-zero", {
+      for (start-index, end-index) in bonds {
+        let (_, start) = cetz.coordinate.resolve(cetz-ctx, _molchemist-atom-center(centers, start-index))
+        let (_, end) = cetz.coordinate.resolve(cetz-ctx, _molchemist-atom-center(centers, end-index))
+        let dx = end.at(0) - start.at(0)
+        let dy = end.at(1) - start.at(1)
+        let length = calc.sqrt(dx * dx + dy * dy)
+        if length > 0 {
+          let nx = -dy / length * bond-radius
+          let ny = dx / length * bond-radius
+          // Match the counter-clockwise CeTZ circle/rect winding so the
+          // non-zero compound fill produces a union at atom-bond joins.
+          cetz.draw.line(
+            (start.at(0) + nx, start.at(1) + ny),
+            (start.at(0) - nx, start.at(1) - ny),
+            (end.at(0) - nx, end.at(1) - ny),
+            (end.at(0) + nx, end.at(1) + ny),
+            close: true,
+          )
+          cetz.draw.circle(start, radius: bond-radius)
+          cetz.draw.circle(end, radius: bond-radius)
+        }
+      }
+      for atom-index in atoms {
+        let (_, center) = cetz.coordinate.resolve(cetz-ctx, _molchemist-atom-center(centers, atom-index))
+        let label = labels.at(atom-index)
+        if label == none {
+          cetz.draw.circle(center, radius: atom-radius)
+        } else {
+          let prefix = "a" + str(atom-index) + ".0."
+          let (_, west) = cetz.coordinate.resolve(cetz-ctx, (name: "molchemist-structure", anchor: prefix + "west"))
+          let (_, east) = cetz.coordinate.resolve(cetz-ctx, (name: "molchemist-structure", anchor: prefix + "east"))
+          let (_, north) = cetz.coordinate.resolve(cetz-ctx, (name: "molchemist-structure", anchor: prefix + "north"))
+          let (_, south) = cetz.coordinate.resolve(cetz-ctx, (name: "molchemist-structure", anchor: prefix + "south"))
+          let width = east.at(0) - west.at(0)
+          let height = north.at(1) - south.at(1)
+          if width <= atom-radius and height <= atom-radius {
+            cetz.draw.circle(center, radius: atom-radius)
+          } else {
+            cetz.draw.rect(
+              (west.at(0) - label-padding, south.at(1) - label-padding),
+              (east.at(0) + label-padding, north.at(1) + label-padding),
+              radius: label-padding,
+            )
+          }
+        }
+      }
+    })
+  })
+}
+
+"#;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StandaloneOptions {
     pub alchemist_import: String,
@@ -134,17 +196,37 @@ impl Default for StandaloneOptions {
 
 pub fn format_alchemist(commands: &[Command], base_sep: &str, indent_width: usize) -> String {
     let mut output = format!("#let base-sep = {base_sep}\n");
-    if has_extended_bonds(commands) {
+    let extended_bonds = has_extended_bonds(commands);
+    let has_ctfile = commands
+        .iter()
+        .any(|command| matches!(command, Command::Ctfile { .. }));
+    if extended_bonds {
         output.push_str(EXTENDED_BOND_DEFINITIONS);
+    } else if has_ctfile {
+        output.push_str("#import \"@preview/cetz:0.5.2\"\n\n");
+    }
+    if has_ctfile {
+        output.push_str(CTFILE_DEFINITIONS);
     }
     let annotations = collect_stereo_annotations(commands);
-    if annotations.is_empty() {
-        output.push_str("#skeletize({\n");
+    if !annotations.is_empty() {
+        output.push_str("#let _molchemist-structure = ");
     } else {
-        output.push_str("#let _molchemist-structure = skeletize({\n");
+        output.push('#');
     }
-    format_commands(&mut output, commands, 1, indent_width);
-    output.push_str("})");
+    if has_ctfile {
+        output.push_str("cetz.canvas({\n");
+        format_ctfile_atom_metadata(&mut output, commands, 1, indent_width);
+        output.push_str("  draw-skeleton(name: \"molchemist-structure\", {\n");
+        format_commands(&mut output, commands, 2, indent_width);
+        output.push_str("  })\n");
+        format_ctfile_overlays(&mut output, commands, 1, indent_width);
+        output.push_str("})");
+    } else {
+        output.push_str("skeletize({\n");
+        format_commands(&mut output, commands, 1, indent_width);
+        output.push_str("})");
+    }
     if !annotations.is_empty() {
         output.push_str("\n#stack(\n");
         output.push_str("  dir: ttb,\n");
@@ -199,6 +281,105 @@ pub fn format_standalone_code(code: &str, options: &StandaloneOptions) -> String
     )
 }
 
+fn atom_command_index(name: &str) -> Option<usize> {
+    name.strip_prefix('a')?.parse().ok()
+}
+
+fn fragment_body(element: &str, atom: Option<&AtomLabel>) -> String {
+    atom.map_or_else(
+        || format!("\"{}\"", escape_string(element)),
+        format_atom_label,
+    )
+}
+
+fn collect_ctfile_atom_metadata(
+    commands: &[Command],
+    current_atom: Option<usize>,
+    atoms: &mut BTreeSet<usize>,
+    centers: &mut BTreeMap<usize, String>,
+    labels: &mut BTreeMap<usize, String>,
+) {
+    let mut current_atom = current_atom;
+    let mut pending_bond: Option<&str> = None;
+
+    for command in commands {
+        match command {
+            Command::Fragment {
+                element,
+                name,
+                atom,
+                ..
+            } => {
+                let Some(atom_index) = atom_command_index(name) else {
+                    pending_bond = None;
+                    continue;
+                };
+                atoms.insert(atom_index);
+                if !element.is_empty() {
+                    labels.insert(atom_index, fragment_body(element, atom.as_ref()));
+                }
+                if let (Some(previous_atom), Some(bond_name)) = (current_atom, pending_bond) {
+                    centers
+                        .entry(previous_atom)
+                        .or_insert_with(|| format!("{bond_name}-start-anchor"));
+                    centers
+                        .entry(atom_index)
+                        .or_insert_with(|| format!("{bond_name}-end-anchor"));
+                }
+                current_atom = Some(atom_index);
+                pending_bond = None;
+            }
+            Command::Bond { name, .. } => pending_bond = Some(name),
+            Command::Branch { body } => {
+                collect_ctfile_atom_metadata(body, current_atom, atoms, centers, labels);
+            }
+            Command::ComponentBreak => {
+                current_atom = None;
+                pending_bond = None;
+            }
+            Command::Ctfile { .. } => {}
+        }
+    }
+}
+
+fn format_ctfile_atom_metadata(
+    output: &mut String,
+    commands: &[Command],
+    depth: usize,
+    indent_width: usize,
+) {
+    let mut atoms = BTreeSet::new();
+    let mut centers = BTreeMap::new();
+    let mut labels = BTreeMap::new();
+    collect_ctfile_atom_metadata(commands, None, &mut atoms, &mut centers, &mut labels);
+    let indent = " ".repeat(depth * indent_width);
+    let item_indent = " ".repeat((depth + 1) * indent_width);
+
+    writeln!(output, "{indent}let _molchemist-atom-centers = (").unwrap();
+    for atom_index in &atoms {
+        let anchor = centers
+            .get(atom_index)
+            .cloned()
+            .unwrap_or_else(|| format!("a{atom_index}.0.mid"));
+        writeln!(
+            output,
+            "{item_indent}(name: \"molchemist-structure\", anchor: \"{}\"),",
+            escape_string(&anchor)
+        )
+        .unwrap();
+    }
+    writeln!(output, "{indent})").unwrap();
+    writeln!(output, "{indent}let _molchemist-atom-labels = (").unwrap();
+    for atom_index in atoms {
+        let label = labels
+            .get(&atom_index)
+            .cloned()
+            .unwrap_or_else(|| "none".to_string());
+        writeln!(output, "{item_indent}{label},").unwrap();
+    }
+    writeln!(output, "{indent})").unwrap();
+}
+
 fn format_commands(output: &mut String, commands: &[Command], depth: usize, indent_width: usize) {
     let indent = " ".repeat(depth * indent_width);
     for command in commands {
@@ -220,10 +401,7 @@ fn format_commands(output: &mut String, commands: &[Command], depth: usize, inde
                         arguments.push(links_text);
                     }
 
-                    let body = atom.as_ref().map_or_else(
-                        || format!("\"{}\"", escape_string(element)),
-                        format_atom_label,
-                    );
+                    let body = fragment_body(element, atom.as_ref());
                     write!(output, "{indent}fragment({body}").unwrap();
                     if !arguments.is_empty() {
                         write!(output, ", {}", arguments.join(", ")).unwrap();
@@ -277,17 +455,186 @@ fn format_commands(output: &mut String, commands: &[Command], depth: usize, inde
             Command::ComponentBreak => {
                 writeln!(output, "{indent}operator(none, margin: base-sep * 0.5)").unwrap();
             }
+            Command::Ctfile { .. } => {}
         }
     }
 }
 
+fn format_ctfile_overlays(
+    output: &mut String,
+    commands: &[Command],
+    depth: usize,
+    indent_width: usize,
+) {
+    let indent = " ".repeat(depth * indent_width);
+    for command in commands {
+        let Command::Ctfile {
+            sgroups,
+            highlights,
+            atom_queries,
+            bond_queries,
+            atom_annotations,
+            variable_attachments,
+        } = command
+        else {
+            continue;
+        };
+        writeln!(
+            output,
+            "{indent}let _molchemist-highlight = rgb(\"#ffd43b\").transparentize(45%)",
+        )
+        .unwrap();
+        let highlight_bonds = highlights
+            .iter()
+            .flat_map(|highlight| &highlight.bonds)
+            .map(|bond| format!("({}, {})", bond.atom1_index, bond.atom2_index))
+            .collect::<Vec<_>>();
+        let highlight_atoms = highlights
+            .iter()
+            .flat_map(|highlight| &highlight.atom_indexes)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if !highlight_bonds.is_empty() || !highlight_atoms.is_empty() {
+            writeln!(
+                output,
+                "{indent}cetz.draw.on-layer(−1, _molchemist-highlight-path({}, {}, _molchemist-atom-centers, _molchemist-atom-labels, _molchemist-highlight))",
+                format_typst_array(&highlight_bonds),
+                format_typst_array(&highlight_atoms),
+            )
+            .unwrap();
+        }
+        for group in sgroups {
+            let name = format!("molchemist-sgroup-{}", group.id);
+            let left_top = format_ctfile_point(&group.left_top);
+            let left_bottom = format_ctfile_point(&group.left_bottom);
+            let right_top = format_ctfile_point(&group.right_top);
+            let right_bottom = format_ctfile_point(&group.right_bottom);
+            writeln!(
+                output,
+                "{indent}cetz.draw.line({left_top}, {left_bottom}, name: \"{name}-left\", stroke: black)",
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "{indent}cetz.draw.line({left_top}, (rel: (base-sep * 0.18, 0pt), to: {left_top}), stroke: black)",
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "{indent}cetz.draw.line({left_bottom}, (rel: (base-sep * 0.18, 0pt), to: {left_bottom}), stroke: black)",
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "{indent}cetz.draw.line({right_top}, {right_bottom}, name: \"{name}-right\", stroke: black)",
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "{indent}cetz.draw.line({right_top}, (rel: (base-sep * −0.18, 0pt), to: {right_top}), stroke: black)",
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "{indent}cetz.draw.line({right_bottom}, (rel: (base-sep * −0.18, 0pt), to: {right_bottom}), stroke: black)",
+            )
+            .unwrap();
+            if let Some(label) = &group.label {
+                writeln!(
+                    output,
+                    "{indent}cetz.draw.content((rel: (base-sep * 0.01, base-sep * 0.035), to: {right_bottom}), text(size: 0.8em)[{}], anchor: \"north-west\")",
+                    escape_content(label),
+                )
+                .unwrap();
+            }
+        }
+        for query in atom_queries {
+            if !query.compact_label.is_empty() {
+                writeln!(
+                    output,
+                    "{indent}cetz.draw.content((rel: (0pt, base-sep * −0.36), to: _molchemist-atom-center(_molchemist-atom-centers, {})), text(size: 0.44em, fill: luma(38%))[{}], anchor: \"north\")",
+                    query.atom_index,
+                    escape_content(&query.compact_label),
+                )
+                .unwrap();
+            }
+        }
+        for query in bond_queries {
+            writeln!(
+                output,
+                "{indent}cetz.draw.content((rel: (0pt, base-sep * 0.2), to: (name: \"molchemist-structure\", anchor: \"b{}.50%\")), text(size: 0.56em, fill: luma(32%))[{}], anchor: \"center\")",
+                query.bond_index,
+                escape_content(&query.label),
+            )
+            .unwrap();
+        }
+        for attachment in variable_attachments {
+            let dash = if attachment.mode.eq_ignore_ascii_case("ANY") {
+                ", dash: \"dotted\""
+            } else {
+                ""
+            };
+            for atom_index in &attachment.endpoint_atom_indexes {
+                writeln!(
+                    output,
+                    "{indent}cetz.draw.line((name: \"molchemist-structure\", anchor: \"b{}.50%\"), _molchemist-atom-center(_molchemist-atom-centers, {}), stroke: (thickness: 0.7pt, paint: luma(8%){}))",
+                    attachment.bond_index,
+                    atom_index,
+                    dash,
+                )
+                .unwrap();
+            }
+        }
+        for annotation in atom_annotations {
+            let (x, y, size) = if annotation.kind == "link-node" {
+                (0.0, 0.3, 0.82)
+            } else {
+                (0.22, 0.18, 0.82)
+            };
+            writeln!(
+                output,
+                "{indent}cetz.draw.content((rel: (base-sep * {x}, base-sep * {y}), to: _molchemist-atom-center(_molchemist-atom-centers, {})), text(size: {size}em, fill: luma(18%))[{}], anchor: \"center\")",
+                annotation.atom_index,
+                escape_content(&annotation.label),
+            )
+            .unwrap();
+        }
+    }
+}
+
+fn format_typst_array(items: &[String]) -> String {
+    match items {
+        [] => "()".to_string(),
+        [item] => format!("({item},)"),
+        items => format!("({})", items.join(", ")),
+    }
+}
+
+fn format_ctfile_point(point: &CtfilePoint) -> String {
+    format!(
+        "(rel: (base-sep * {}, base-sep * {}), to: _molchemist-atom-center(_molchemist-atom-centers, {}))",
+        typst_number(point.offset[0]),
+        typst_number(point.offset[1]),
+        point.atom_index,
+    )
+}
+
 fn format_atom_label(atom: &AtomLabel) -> String {
     let symbol = escape_content(&atom.symbol);
-    let base = match atom.hydrogen_count {
-        0 => format!("[{symbol}]"),
-        1 => format!("[{symbol}H]"),
-        count => {
-            format!("[{symbol}#math.attach([H], b: [{count}], t: std.hide([{count}]))]")
+    let base = if atom.query_symbol {
+        format!(
+            "text(size: 0.62em)[{}{symbol}]",
+            if atom.query_negated { "!" } else { "" }
+        )
+    } else if let Some(rgroup_label) = atom.rgroup_label {
+        format!("math.attach([R], b: [{rgroup_label}], t: std.hide([{rgroup_label}]))")
+    } else if atom.hidden {
+        format!("std.hide([{symbol}])")
+    } else {
+        match atom.hydrogen_count {
+            0 => format!("[{symbol}]"),
+            1 => format!("[{symbol}H]"),
+            count => format!("[{symbol}#math.attach([H], b: [{count}], t: std.hide([{count}]))]"),
         }
     };
     let mut attachments = Vec::new();
@@ -341,6 +688,7 @@ fn escape_content(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('#', "\\#")
         .replace('*', "\\*")
+        .replace('[', "\\[")
         .replace(']', "\\]")
 }
 
@@ -383,7 +731,7 @@ fn has_extended_bonds(commands: &[Command]) -> bool {
         }
         Command::Bond { bond_type, .. } => is_extended_bond(bond_type),
         Command::Branch { body } => has_extended_bonds(body),
-        Command::ComponentBreak => false,
+        Command::ComponentBreak | Command::Ctfile { .. } => false,
     })
 }
 
@@ -512,6 +860,61 @@ mod tests {
     }
 
     #[test]
+    fn ctfile_highlight_subpaths_share_counter_clockwise_winding() {
+        assert!(CTFILE_DEFINITIONS.contains(concat!(
+            "(start.at(0) + nx, start.at(1) + ny),\n",
+            "            (start.at(0) - nx, start.at(1) - ny),\n",
+            "            (end.at(0) - nx, end.at(1) - ny),\n",
+            "            (end.at(0) + nx, end.at(1) + ny),",
+        )));
+        assert!(CTFILE_DEFINITIONS.contains(concat!(
+            "let bond-radius = utils.convert-length(cetz-ctx, base-sep * 0.08)\n",
+            "    let label-padding = bond-radius",
+        )));
+        assert!(CTFILE_DEFINITIONS.contains("anchor: prefix + \"west\""));
+        assert!(CTFILE_DEFINITIONS.contains("south.at(1) - label-padding"));
+        assert!(!CTFILE_DEFINITIONS.contains("let label-size = measure(label)"));
+    }
+
+    #[test]
+    fn ctfile_atom_metadata_keeps_hidden_centers_and_visible_glyphs_separate() {
+        let commands = vec![
+            Command::Fragment {
+                element: String::new(),
+                name: "a0".to_string(),
+                links: Vec::new(),
+                atom: None,
+                annotation: None,
+            },
+            Command::Bond {
+                bond_type: "single".to_string(),
+                angle: 0.0,
+                length_scale: 1.0,
+                offset: None,
+                name: "b0".to_string(),
+            },
+            Command::Fragment {
+                element: "[C,N,O,S,P]".to_string(),
+                name: "a1".to_string(),
+                links: Vec::new(),
+                atom: None,
+                annotation: None,
+            },
+        ];
+        let mut atoms = BTreeSet::new();
+        let mut centers = BTreeMap::new();
+        let mut labels = BTreeMap::new();
+
+        collect_ctfile_atom_metadata(&commands, None, &mut atoms, &mut centers, &mut labels);
+
+        assert_eq!(atoms, BTreeSet::from([0, 1]));
+        assert_eq!(centers.get(&0).unwrap(), "b0-start-anchor");
+        assert_eq!(centers.get(&1).unwrap(), "b0-end-anchor");
+        assert!(!labels.contains_key(&0));
+        assert_eq!(labels.get(&1).unwrap(), "\"[C,N,O,S,P]\"");
+    }
+
+    #[test]
     fn structured_atom_metadata_uses_math_attachments() {
         let commands = vec![Command::Fragment {
             element: "CH_3^+".to_string(),
@@ -524,6 +927,10 @@ mod tests {
                 isotope: Some(13),
                 radical: Some(2),
                 atom_map: Some(7),
+                rgroup_label: None,
+                query_symbol: false,
+                query_negated: false,
+                hidden: false,
             }),
             annotation: None,
         }];

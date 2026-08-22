@@ -131,7 +131,7 @@ mod tests {
                 }
                 Command::Bond { bond_type, .. } => output.push(bond_type.clone()),
                 Command::Branch { body } => bond_types(body, output),
-                Command::ComponentBreak => {}
+                Command::ComponentBreak | Command::Ctfile { .. } => {}
             }
         }
     }
