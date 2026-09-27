@@ -127,7 +127,7 @@ Import `molchemist` and choose the renderer that matches your input: @cmd:render
 
 #example[
   ```typ
-  #import "@preview/molchemist:0.1.5": *
+  #import "@preview/molchemist:0.1.6": *
 
   #let mol-data = read("Structure2D_COMPOUND_CID_93406.sdf")
   #render-mol(mol-data, abbreviate: true)

@@ -9,7 +9,7 @@ Molfile/SDF parsing is powered by [`sdfrust`](https://github.com/hfooladi/sdfrus
 This SDF example uses the bundled PubChem record for CID 93406:
 
 ```typ
-#import "@preview/molchemist:0.1.5": *
+#import "@preview/molchemist:0.1.6": *
 
 #let molecule = read("Structure2D_COMPOUND_CID_93406.sdf")
 #render-mol(molecule, abbreviate: true)
