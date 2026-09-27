@@ -18,8 +18,10 @@ mod formats;
 mod formatter;
 mod semantic;
 mod reaction;
+mod rgroups;
 pub use formats::{mol2_to_sdf, parse_reaction, MoleculeInput, ReactionInput};
 pub use reaction::{analyze_reaction, ReactionAnalysis};
+pub use rgroups::{expand_superatoms, parse_rgroups};
 
 #[cfg(feature = "native-layout")]
 mod native_layout;
