@@ -15,7 +15,7 @@ This SDF example uses the bundled PubChem record for CID 93406:
 #render-mol(molecule, abbreviate: true)
 ```
 
-![Typeset PubChem CID 93406](package/images/ex02.png)
+![Typeset PubChem CID 93406](package/images/pubchem-cid-93406-abbreviated.png)
 
 Source data: [PubChem Compound CID 93406](https://pubchem.ncbi.nlm.nih.gov/compound/93406).
 
@@ -28,7 +28,7 @@ SMILES input uses the same renderer after generating a 2D layout. This example i
 )
 ```
 
-![Typeset PubChem CID 896](package/images/ex06.png)
+![Typeset PubChem CID 896](package/images/melatonin-abbreviated.png)
 
 Source data: [PubChem Compound CID 896](https://pubchem.ncbi.nlm.nih.gov/compound/896).
 
