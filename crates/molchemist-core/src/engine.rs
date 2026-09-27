@@ -405,6 +405,127 @@ pub fn sdf_record_to_ast_with_coords(
     commands_to_cbor(&commands)
 }
 
+pub fn sdf_force_layout_input(sdf_data: &[u8], record: usize) -> Result<Vec<u8>, String> {
+    sdf_projection_layout_input(sdf_data, record, false)
+}
+
+pub fn sdf_projection_layout_input(
+    sdf_data: &[u8],
+    record: usize,
+    stereo3d: bool,
+) -> Result<Vec<u8>, String> {
+    let sdf = std::str::from_utf8(sdf_data).map_err(|e| e.to_string())?;
+    let parsed = parse_sdf_record(sdf, record)?;
+    let mut graph = sdf_layout_graph(&parsed.molecule);
+    let explicit = extract_sdf_stereo(&parsed.molecule, parsed.raw_record);
+    let xyz = parsed
+        .chemical
+        .atoms
+        .iter()
+        .map(|a| {
+            [
+                a.coordinates[0],
+                a.coordinates[1],
+                if stereo3d { a.coordinates[2] } else { 0.0 },
+            ]
+        })
+        .collect::<Vec<_>>();
+    let dot = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    let delta = |a: usize, b: usize| {
+        [
+            xyz[a][0] - xyz[b][0],
+            xyz[a][1] - xyz[b][1],
+            xyz[a][2] - xyz[b][2],
+        ]
+    };
+    for (index, bond) in graph.bonds.iter().enumerate() {
+        if bond.kind != SmilesBondKind::Double || explicit.contains_key(&(bond.atom1, bond.atom2)) {
+            continue;
+        }
+        let left = graph.neighbor_order[bond.atom1]
+            .iter()
+            .copied()
+            .find(|&a| a != bond.atom2);
+        let right = graph.neighbor_order[bond.atom2]
+            .iter()
+            .copied()
+            .find(|&a| a != bond.atom1);
+        let (Some(left), Some(right)) = (left, right) else {
+            continue;
+        };
+        let axis = delta(bond.atom2, bond.atom1);
+        let denominator = dot(axis, axis);
+        if denominator < 1e-16 {
+            continue;
+        }
+        let perpendicular = |v: [f64; 3]| {
+            let projection = dot(v, axis) / denominator;
+            [
+                v[0] - projection * axis[0],
+                v[1] - projection * axis[1],
+                v[2] - projection * axis[2],
+            ]
+        };
+        let a = perpendicular(delta(left, bond.atom1));
+        let b = perpendicular(delta(right, bond.atom2));
+        let norm = (dot(a, a) * dot(b, b)).sqrt();
+        if norm < 1e-12 {
+            continue;
+        }
+        let cosine = dot(a, b) / norm;
+        if cosine.abs() < 0.95 {
+            continue;
+        }
+        graph.double_bond_stereo.push(DoubleBondStereoSpec {
+            bond_index: index,
+            atom1: left,
+            atom2: right,
+            is_z: cosine > 0.0,
+        });
+    }
+    Ok(encode_layout_input(&graph))
+}
+
+/// Coordinates in command-stream units, including contracted superatoms.
+pub fn sdf_depiction_positions(sdf: &str, coords: &[u8], record: usize) -> Result<Vec<u8>, String> {
+    let parsed = parse_sdf_record(sdf, record)?;
+    let notes = extract_sdf_stereo_annotations(parsed.raw_record, &parsed.molecule);
+    let mut mol = render_mol_from_record(&parsed.chemical, notes);
+    if !coords.is_empty() {
+        let coordinates = decode_coords(coords, mol.atoms.len(), mol.bonds.len())?;
+        for (atom, &(x, y)) in mol.atoms.iter_mut().zip(&coordinates.coords) {
+            atom.x = f64::from(x);
+            atom.y = f64::from(y);
+        }
+    }
+    let mol = project_record_render(&parsed.chemical, mol).mol;
+    let mut primary = Vec::new();
+    let mut fallback = Vec::new();
+    for bond in &mol.bonds {
+        let a = &mol.atoms[bond.atom1];
+        let b = &mol.atoms[bond.atom2];
+        let length = (a.x - b.x).hypot(a.y - b.y);
+        if length.is_finite() && length > f64::EPSILON {
+            fallback.push(length);
+            if bond.kind.contributes_to_average_length() {
+                primary.push(length);
+            }
+        }
+    }
+    let unit = median(&mut primary)
+        .or_else(|| median(&mut fallback))
+        .unwrap_or(1.0);
+    let positions = mol
+        .atoms
+        .iter()
+        .enumerate()
+        .map(|(i, a)| (format!("a{i}"), [a.x / unit, a.y / unit]))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut bytes = Vec::new();
+    ciborium::into_writer(&positions, &mut bytes).map_err(|e| e.to_string())?;
+    Ok(bytes)
+}
+
 pub fn sdf_to_commands(sdf: &str, mode: RenderMode) -> Result<Vec<Command>, String> {
     sdf_record_to_commands(sdf, mode, 1)
 }
@@ -752,6 +873,93 @@ fn mode_from_options(options: &[u8]) -> RenderMode {
         .unwrap_or_default()
 }
 
+pub fn sdf_stereo3d_ast(
+    sdf: &str,
+    coords_data: &[u8],
+    mode: RenderMode,
+    record: usize,
+) -> Result<Vec<u8>, String> {
+    sdf_reoriented_ast(sdf, coords_data, mode, record, true)
+}
+
+pub fn sdf_reoriented_ast(
+    sdf: &str,
+    coords_data: &[u8],
+    mode: RenderMode,
+    record: usize,
+    infer: bool,
+) -> Result<Vec<u8>, String> {
+    let parsed = parse_sdf_record(sdf, record)?;
+    let mut stereo = extract_sdf_stereo(&parsed.molecule, parsed.raw_record);
+    let notes = extract_sdf_stereo_annotations(parsed.raw_record, &parsed.molecule);
+    let mut mol = render_mol_from_record(&parsed.chemical, notes);
+    if !coords_data.is_empty() {
+        let coords = decode_coords(coords_data, mol.atoms.len(), mol.bonds.len())?;
+        for (a, &(x, y)) in mol.atoms.iter_mut().zip(&coords.coords) {
+            a.x = f64::from(x);
+            a.y = f64::from(y);
+        }
+    }
+    let xy = mol.atoms.iter().map(|a| [a.x, a.y]).collect::<Vec<_>>();
+    // Numeric up/down flags alone are not invariant under an XY relayout.
+    if !coords_data.is_empty() {
+        let explicit = stereo
+            .iter()
+            .filter_map(|(&(a, b), &(s, forward))| {
+                (forward && matches!(s, 1 | 6)).then_some((a, b, s))
+            })
+            .collect::<Vec<_>>();
+        let centers = explicit
+            .iter()
+            .map(|&(a, _, _)| a)
+            .collect::<std::collections::BTreeSet<_>>();
+        for center in centers {
+            let mut source = parsed.chemical.clone();
+            for atom in &mut source.atoms {
+                atom.coordinates[2] = 0.0;
+            }
+            for &(a, b, style) in &explicit {
+                if a == center {
+                    source.atoms[b].coordinates[2] = if style == 1 { 1.0 } else { -1.0 };
+                }
+            }
+            {
+                let (a, b, style) =
+                    crate::stereo3d::reorient_explicit_center(&source, &xy, center)?;
+                if stereo.get(&(a, b)).is_some_and(|&(_, forward)| !forward) {
+                    return Err("Relayout would assign conflicting stereochemical wedges".into());
+                }
+                for &(u, v, _) in &explicit {
+                    if u == center {
+                        stereo.remove(&(u, v));
+                        stereo.remove(&(v, u));
+                    }
+                }
+                insert_stereo_edge(&mut stereo, a, b, style);
+            }
+        }
+    }
+    let wedges = if infer {
+        crate::stereo3d::tetrahedral_wedges(&parsed.chemical, &xy)?
+    } else {
+        Vec::new()
+    };
+    for (a, b, style) in wedges {
+        let explicit =
+            stereo.keys().any(|&(u, _)| u == a) || parsed.chemical.atoms[a].stereo_parity.is_some();
+        if !explicit {
+            insert_stereo_edge(&mut stereo, a, b, style);
+        }
+    }
+    let projection = project_record_render(&parsed.chemical, mol);
+    commands_to_cbor(&ast_from_chemical_record(
+        &parsed.chemical,
+        &projection,
+        mode.as_str(),
+        &stereo,
+    ))
+}
+
 fn commands_to_cbor(commands: &[Command]) -> Result<Vec<u8>, String> {
     let mut buffer = Vec::new();
     ciborium::into_writer(commands, &mut buffer).map_err(|e| e.to_string())?;
@@ -770,7 +978,7 @@ fn render_mol_from_record(
             element: atom.element.clone(),
             x: atom.coordinates[0],
             y: atom.coordinates[1],
-            hydrogens: 0,
+            hydrogens: crate::valence::implicit_hydrogens(record, atom.index),
             charge: atom.formal_charge,
             isotope: atom.isotope,
             radical: atom.radical,
@@ -808,7 +1016,10 @@ fn render_mol_from_record(
     }
 
     for group in &record.sgroups {
-        if group.kind == "superatom" && group.atom_source_ids.len() == 1 {
+        if group.kind == "superatom"
+            && group.atom_source_ids.len() == 1
+            && group.expanded != Some(true)
+        {
             let Some(label) = group.label.as_ref().or(group.subscript.as_ref()) else {
                 continue;
             };
@@ -816,6 +1027,7 @@ fn render_mol_from_record(
             if let Some(atom) = record.atoms.iter().find(|atom| atom.source_id == source_id) {
                 atoms[atom.index].element = typographic_superatom_label(label);
                 atoms[atom.index].force_label = true;
+                atoms[atom.index].hydrogens = 0;
             }
         }
     }
@@ -2100,7 +2312,7 @@ fn layout_coordination_center<const N: usize>(
     }
 
     let Some(components) = ligand_branch_components(graph, center, ligands) else {
-        return false;
+        return layout_cyclic_coordination(graph, coords, center, ligands, target_angles);
     };
     let (center_x, center_y) = coords[center];
     let rotations = ligands
@@ -2135,6 +2347,166 @@ fn layout_coordination_center<const N: usize>(
         }
     }
 
+    true
+}
+
+/// Solve a whole chelate graph with the coordination template held fixed.
+/// Branch rotation cannot move two ligands sharing the same ring independently.
+fn layout_cyclic_coordination<const N: usize>(
+    graph: &SmilesGraph,
+    coords: &mut [(f32, f32)],
+    center: usize,
+    ligands: &[usize; N],
+    targets: &[f64; N],
+) -> bool {
+    if ligands.iter().copied().collect::<HashSet<_>>().len() != N
+        || ligands.contains(&center)
+        || ligands.iter().any(|&a| !has_single_bond(graph, center, a))
+    {
+        return false;
+    }
+    let original = coords.to_vec();
+    let origin = coords[center];
+    let mut lengths = graph
+        .bonds
+        .iter()
+        .map(|b| {
+            f64::from(coords[b.atom1].0 - coords[b.atom2].0)
+                .hypot(f64::from(coords[b.atom1].1 - coords[b.atom2].1))
+        })
+        .filter(|&d| d > 1e-6 && d.is_finite())
+        .collect::<Vec<_>>();
+    let Some(unit) = median(&mut lengths) else {
+        return false;
+    };
+    let mut p = coords
+        .iter()
+        .map(|&(x, y)| [f64::from(x), f64::from(y)])
+        .collect::<Vec<_>>();
+    let mut pinned = vec![false; p.len()];
+    let mut reachable = HashSet::from([center]);
+    let mut pending = VecDeque::from([center]);
+    while let Some(atom) = pending.pop_front() {
+        for bond in &graph.bonds {
+            let other = if bond.atom1 == atom {
+                bond.atom2
+            } else if bond.atom2 == atom {
+                bond.atom1
+            } else {
+                continue;
+            };
+            if reachable.insert(other) {
+                pending.push_back(other);
+            }
+        }
+    }
+    for (i, fixed) in pinned.iter_mut().enumerate() {
+        *fixed = !reachable.contains(&i);
+    }
+    // Preserve explicit alkene geometry and its substituent orientation.
+    for spec in &graph.double_bond_stereo {
+        let bond = &graph.bonds[spec.bond_index];
+        for i in [bond.atom1, bond.atom2, spec.atom1, spec.atom2] {
+            pinned[i] = true;
+        }
+    }
+    // Pin other stereocenters and their immediate neighbors so optimizing a
+    // chelate cannot change an already defined local projection.
+    for (i, atom) in graph.atoms.iter().enumerate() {
+        if i != center && (atom.stereo.is_some() || atom.extended_stereo.is_some()) {
+            pinned[i] = true;
+            for b in &graph.bonds {
+                if b.atom1 == i {
+                    pinned[b.atom2] = true;
+                }
+                if b.atom2 == i {
+                    pinned[b.atom1] = true;
+                }
+            }
+        }
+    }
+    pinned[center] = true;
+    for (&ligand, &angle) in ligands.iter().zip(targets) {
+        let target = [
+            f64::from(origin.0) + unit * angle.to_radians().cos(),
+            f64::from(origin.1) + unit * angle.to_radians().sin(),
+        ];
+        if pinned[ligand]
+            && (p[ligand][0] - target[0]).hypot(p[ligand][1] - target[1]) > 1e-4 * unit
+        {
+            return false;
+        }
+        p[ligand] = target;
+        pinned[ligand] = true;
+    }
+    let connected = graph
+        .bonds
+        .iter()
+        .map(|b| (b.atom1.min(b.atom2), b.atom1.max(b.atom2)))
+        .collect::<HashSet<_>>();
+    for step in 0..800 {
+        let mut force = vec![[0.0; 2]; p.len()];
+        for b in &graph.bonds {
+            let dx = p[b.atom2][0] - p[b.atom1][0];
+            let dy = p[b.atom2][1] - p[b.atom1][1];
+            let d = dx.hypot(dy).max(1e-9 * unit);
+            let strength = (d - unit) / d;
+            for (axis, v) in [dx, dy].into_iter().enumerate() {
+                force[b.atom1][axis] += v * strength;
+                force[b.atom2][axis] -= v * strength;
+            }
+        }
+        for a in 0..p.len() {
+            for b in a + 1..p.len() {
+                if !reachable.contains(&a) || !reachable.contains(&b) {
+                    continue;
+                }
+                if connected.contains(&(a, b)) {
+                    continue;
+                }
+                let mut dx = p[b][0] - p[a][0];
+                let mut dy = p[b][1] - p[a][1];
+                let d = dx.hypot(dy);
+                if d < 0.7 * unit {
+                    if d < 1e-8 * unit {
+                        let angle = (a * 31 + b * 17) as f64;
+                        dx = angle.cos() * 1e-5 * unit;
+                        dy = angle.sin() * 1e-5 * unit;
+                    }
+                    let distance = dx.hypot(dy);
+                    let strength = (0.7 * unit - distance) / distance * 0.5;
+                    for (axis, v) in [dx, dy].into_iter().enumerate() {
+                        force[a][axis] -= v * strength;
+                        force[b][axis] += v * strength;
+                    }
+                }
+            }
+        }
+        let rate = 0.12 * (1.0 - step as f64 / 1000.0);
+        for i in 0..p.len() {
+            if !pinned[i] {
+                for axis in 0..2 {
+                    p[i][axis] += force[i][axis].clamp(-unit, unit) * rate;
+                }
+            }
+        }
+    }
+    if graph.bonds.iter().any(|b| {
+        let d = (p[b.atom1][0] - p[b.atom2][0]).hypot(p[b.atom1][1] - p[b.atom2][1]);
+        !d.is_finite() || d < 0.15 * unit || d > 4.0 * unit
+    }) {
+        return false;
+    }
+    for (i, xy) in p.into_iter().enumerate() {
+        coords[i] = (xy[0] as f32, xy[1] as f32);
+    }
+    if coords
+        .iter()
+        .any(|&(x, y)| !x.is_finite() || !y.is_finite())
+    {
+        coords.copy_from_slice(&original);
+        return false;
+    }
     true
 }
 
@@ -2386,7 +2758,10 @@ fn ctfile_depictions(
         .sgroups
         .iter()
         .filter(|group| group.kind != "unknown")
-        .filter(|group| !(group.kind == "superatom" && group.atom_source_ids.len() == 1))
+        .filter(|group| {
+            !(group.kind == "superatom"
+                && (group.atom_source_ids.len() == 1 || group.expanded == Some(true)))
+        })
         .filter(|group| !projection.contracted_sgroup_ids.contains(&group.id))
         .filter_map(|group| {
             let mut seen = HashSet::new();
@@ -2457,10 +2832,20 @@ fn ctfile_depictions(
         .iter()
         .filter(|collection| collection.kind == "highlight")
         .map(|collection| {
+            let groups = record
+                .sgroups
+                .iter()
+                .filter(|g| g.kind != "unknown" && collection.sgroup_source_ids.contains(&g.id))
+                .collect::<Vec<_>>();
+            let group_atoms = groups
+                .iter()
+                .flat_map(|g| g.atom_source_ids.iter().copied())
+                .collect::<std::collections::BTreeSet<_>>();
             let mut seen_atoms = HashSet::new();
             let mut highlighted_atoms = collection
                 .atom_source_ids
                 .iter()
+                .chain(group_atoms.iter())
                 .filter_map(|id| atom_indexes.get(id).copied())
                 .filter(|index| seen_atoms.insert(*index))
                 .collect::<Vec<_>>();
@@ -2470,7 +2855,29 @@ fn ctfile_depictions(
                 .map(|bond| (bond.source_id, bond.index))
                 .collect::<HashMap<_, _>>();
             let mut bonds = Vec::new();
-            for source_id in &collection.bond_source_ids {
+            let mut selected_bonds = collection
+                .bond_source_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            selected_bonds.extend(
+                groups
+                    .iter()
+                    .flat_map(|g| g.bond_source_ids.iter().copied()),
+            );
+            selected_bonds.extend(
+                record
+                    .bonds
+                    .iter()
+                    .filter(|b| {
+                        groups.iter().any(|g| {
+                            g.atom_source_ids.contains(&b.atom1_source_id)
+                                && g.atom_source_ids.contains(&b.atom2_source_id)
+                        })
+                    })
+                    .map(|b| b.source_id),
+            );
+            for source_id in &selected_bonds {
                 let Some(&source_bond_index) = source_bond_indexes.get(source_id) else {
                     continue;
                 };
@@ -2906,7 +3313,7 @@ fn build_labels(
                 labels[i] = render_label(atom, total_h);
             }
         } else {
-            labels[i] = render_label(atom, 0);
+            labels[i] = render_label(atom, atom.hydrogens);
         }
     }
 
@@ -2951,7 +3358,7 @@ fn has_visible_atom_metadata(atom: &RenderAtom) -> bool {
 
 fn render_label(atom: &RenderAtom, hydrogen_count: u8) -> RenderLabel {
     let text = atom_label(&atom.element, hydrogen_count, atom.charge);
-    let structured = (hydrogen_count > 1 || atom.charge != 0 || has_visible_atom_metadata(atom))
+    let structured = (hydrogen_count > 0 || atom.charge != 0 || has_visible_atom_metadata(atom))
         .then(|| AtomLabel {
             symbol: atom.element.clone(),
             hydrogen_count,
@@ -3819,7 +4226,7 @@ mod tests {
             .find(|(_, name, _)| name == "a0")
             .unwrap();
 
-        assert_eq!(carbon.0, "C");
+        assert_eq!(carbon.0, "CH_3");
         assert_eq!(carbon.2.as_deref(), Some("CFG=1; OR7"));
     }
 
@@ -4174,6 +4581,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["unknown-sgroup-semantics", "highlight-members-not-depicted"]
         );
+        let known = sdf.replace("3 ZZZ", "3 GEN");
+        assert!(inspect_sdf_record(&known, 1)
+            .unwrap()
+            .diagnostics
+            .is_empty());
+        assert!(sdf_to_commands(&known, RenderMode::Skeletal).unwrap().iter().any(|cmd| matches!(cmd, Command::Ctfile { highlights, .. } if highlights.len() == 1 && highlights[0].atom_indexes == vec![0])));
     }
 
     #[test]
@@ -4317,10 +4730,27 @@ mod tests {
         let commands = sdf_to_commands(sdf, RenderMode::Full).unwrap();
         assert_eq!(fragment_data(&commands).len(), 3);
         assert_eq!(bond_data(&commands).len(), 2);
-        match commands.last().unwrap() {
-            Command::Ctfile { sgroups, .. } => assert_eq!(sgroups.len(), 1),
-            command => panic!("expected expanded SGroup overlay, got {command:?}"),
-        }
+        assert!(!commands
+            .iter()
+            .any(|c| matches!(c, Command::Ctfile { sgroups, .. } if !sgroups.is_empty())));
+        assert_eq!(fragment_data(&commands).last().unwrap().0, "OH");
+        assert_eq!(record.sgroups[0].label.as_deref(), Some("Et"));
+    }
+
+    #[test]
+    fn expanded_carboxylic_acid_has_hydroxyl_and_no_contracted_labels() {
+        let source =
+            include_str!("../../molchemist-cli/tests/fixtures/rdkit/Sgroups_Abbreviations.mol");
+        let expanded = crate::expand_superatoms(source, 1).unwrap();
+        let commands = sdf_to_commands(&expanded, RenderMode::Skeletal).unwrap();
+        let fragments = fragment_data(&commands);
+        assert!(fragments.iter().any(|(label, _, _)| label == "OH"));
+        assert!(fragments.iter().any(|(label, _, _)| label == "N^+"));
+        assert!(fragments.iter().any(|(label, _, _)| label == "O^-"));
+        assert!(!fragments
+            .iter()
+            .any(|(label, _, _)| label.contains("NO₂") || label.contains("COOH")));
+        assert_eq!(bond_data(&commands).len(), 12);
     }
 
     #[test]
@@ -4452,7 +4882,8 @@ mod tests {
         let (label, atom) = first_fragment(&commands);
         let atom = atom.unwrap();
 
-        assert_eq!(label, "C^+");
+        assert_eq!(label, "CH_2^+");
+        assert_eq!(atom.hydrogen_count, 2);
         assert_eq!(atom.symbol, "C");
         assert_eq!(atom.charge, 1);
         assert_eq!(atom.isotope, Some(13));
@@ -4518,7 +4949,7 @@ mod tests {
         let sdf = format!("{CARBON_V2000}$$$$\r\n{OXYGEN_V2000}$$$$\r\n\r\n");
 
         let commands = sdf_record_to_commands(&sdf, RenderMode::Full, 2).unwrap();
-        assert_eq!(first_fragment(&commands).0, "O");
+        assert_eq!(first_fragment(&commands).0, "OH_2");
         assert_eq!(
             sdf_record_to_commands(&sdf, RenderMode::Full, 0).unwrap_err(),
             "SDF record numbers are one-based"
@@ -4645,7 +5076,7 @@ mod tests {
                 Command::Fragment { element: water, name: oxygen_name, .. },
                 Command::ComponentBreak,
                 Command::Fragment { element: sodium, name: sodium_name, .. },
-            ] if water == "OH"
+            ] if water == "OH_2"
                 && oxygen_name == "a2"
                 && sodium == "Na"
                 && sodium_name == "a1"
@@ -5324,7 +5755,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_extended_topology_keeps_its_annotation_fallback() {
+    fn invalid_allene_keeps_annotation_and_cyclic_coordination_is_projected() {
         let graph = parse_smiles_graph("[C@AL1](F)(Cl)C").unwrap();
         let mut coords = vec![(0.0, 0.0); graph.atoms.len()];
         let mut stereo_map = HashMap::new();
@@ -5346,8 +5777,21 @@ mod tests {
             &mut cyclic_coords,
             &mut cyclic_stereo_map,
         )
-        .is_empty());
+        .contains(&0));
         assert_eq!(cyclic.atoms[0].stereo_annotation.as_deref(), Some("@SP1"));
+    }
+
+    #[test]
+    fn projection_carries_3d_double_bond_geometry_to_coordgen() {
+        let mol="ez\n\n\n  0  0  0  0  0  0            999 V3000\nM  V30 BEGIN CTAB\nM  V30 COUNTS 4 3 0 0 0\nM  V30 BEGIN ATOM\nM  V30 1 C 0 0 0 0\nM  V30 2 C 1 0 0 0\nM  V30 3 F 0 0 1 0\nM  V30 4 F 1 0 -1 0\nM  V30 END ATOM\nM  V30 BEGIN BOND\nM  V30 1 2 1 2\nM  V30 2 1 1 3\nM  V30 3 1 2 4\nM  V30 END BOND\nM  V30 END CTAB\nM  END\n";
+        let (_, _, _, ez) =
+            decode_layout_input(&sdf_projection_layout_input(mol.as_bytes(), 1, true).unwrap());
+        assert_eq!(ez, vec![(0, 2, 3, 0)]);
+        let (_, _, _, ez) = decode_layout_input(
+            &sdf_projection_layout_input(mol.replace("1 0 -1", "1 0 1").as_bytes(), 1, true)
+                .unwrap(),
+        );
+        assert_eq!(ez, vec![(0, 2, 3, 1)]);
     }
 
     #[test]
@@ -5377,5 +5821,50 @@ mod tests {
             oh.atoms[0].extended_stereo,
             Some(ExtendedAtomStereoSpec::Octahedral { .. })
         ));
+    }
+
+    #[test]
+    fn relayout_recomputes_explicit_wedges_after_reflection() {
+        let source = include_str!("../../molchemist-cli/tests/fixtures/extended/tetra-3d.mol")
+            .replace("\r\n", "\n");
+        let points = [(0., 0.), (1., 0.), (0., 1.), (-1., 0.), (0., -1.)];
+        let reflected = points.map(|(x, y)| (-x, y));
+        for newline in ["\n", "\r\n"] {
+            let mol = source
+                .replace('\n', newline)
+                .replace("1 1 1 0", "1 0 0 0")
+                .replace("-1 -1 1 0", "0 1 0 0")
+                .replace("-1 1 -1 0", "-1 0 0 0")
+                .replace("1 -1 -1 0", "0 -1 0 0")
+                .replacen("M  V30 1 1 1 2", "M  V30 1 1 1 2 CFG=1", 1);
+            assert!(
+                mol.lines().any(|line| line == "M  V30 1 1 1 2 CFG=1"),
+                "The fixture must contain an explicit wedge with {newline:?} line endings"
+            );
+            let wedges = |points: &[(f32, f32)]| {
+                let ast = sdf_reoriented_ast(
+                    &mol,
+                    &coordinate_payload(points, 4),
+                    RenderMode::Skeletal,
+                    1,
+                    false,
+                )
+                .unwrap();
+                let commands: Vec<Command> = ciborium::from_reader(ast.as_slice()).unwrap();
+                bond_data(&commands)
+                    .into_iter()
+                    .map(|(kind, _, _)| kind)
+                    .filter(|kind| kind.starts_with("cram-"))
+                    .collect::<Vec<_>>()
+            };
+            let before = wedges(&points);
+            let after = wedges(&reflected);
+            assert_eq!(before.len(), 1, "line endings: {newline:?}");
+            assert_eq!(after.len(), 1, "line endings: {newline:?}");
+            assert_ne!(
+                before, after,
+                "An XY reflection must reverse the wedge to preserve the original stereoisomer (line endings: {newline:?})"
+            );
+        }
     }
 }

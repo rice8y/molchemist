@@ -31,6 +31,16 @@ const FIDELITY_V3000: &str = concat!(
     "$$$$\n",
 );
 
+fn scene(source: &str) -> &str {
+    source
+        .split_once("#let _scene = ")
+        .expect("serialized scene")
+        .1
+        .split_once("\n#let _scene-config")
+        .unwrap()
+        .0
+}
+
 fn molchemist() -> Command {
     Command::new(env!("CARGO_BIN_EXE_molchemist"))
 }
@@ -107,9 +117,9 @@ fn dumps_smiles_to_stdout_without_diagnostics() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.starts_with("#let base-sep = 3em\n#skeletize({\n"));
-    assert!(stdout.contains("double(absolute:"));
-    assert!(stdout.ends_with("})"));
+    assert!(stdout.starts_with("#import \"@preview/alchemist:0.2.0\": *\n"));
+    assert!(scene(&stdout).contains("\"bondType\": \"double\""));
+    assert!(stdout.ends_with("config: _scene-config))"));
 }
 
 #[test]
@@ -123,17 +133,15 @@ fn dumps_atom_classes_as_inline_label_suffixes() {
         assert!(output.status.success(), "atom class failed in {mode}");
         assert!(output.stderr.is_empty());
         let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(stdout.contains(" + [:1]))"), "atom class missing in {mode}");
+        let data = scene(&stdout);
         assert!(
-            !stdout.contains("br: [:1]"),
-            "atom class is subscripted in {mode}"
+            data.contains("\"atomMap\": 1"),
+            "atom map missing in {mode}"
         );
         if mode != "full" {
             assert!(
-                stdout.contains(
-                    "math.attach(math.attach([C#math.attach([H], b: [3], t: std.hide([3]))]) + [:1])"
-                ),
-                "hydrogen count or atom class order changed in {mode}"
+                data.contains("\"hydrogenCount\": 3"),
+                "hydrogen count missing in {mode}"
             );
         }
     }
@@ -155,9 +163,9 @@ fn dumps_smiles_quadruple_bonds_in_every_mode() {
         assert!(output.stderr.is_empty());
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("#let _molchemist-quadruple = build-link"));
-        assert!(stdout.contains("_molchemist-quadruple(absolute:"));
-        assert!(stdout.contains("fragment(\"Cr\", name: \"a0\")"));
-        assert!(stdout.contains("fragment(\"Cr\", name: \"a1\")"));
+        assert!(scene(&stdout).contains("\"bondType\": \"quadruple\""));
+        assert!(scene(&stdout).contains("\"name\": \"a0\""));
+        assert!(scene(&stdout).contains("\"name\": \"a1\""));
     }
 }
 
@@ -171,9 +179,9 @@ fn dumps_disconnected_smiles_as_separate_components() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("math.attach([Na], tr: [+], br: std.hide([+]))"));
-    assert!(stdout.contains("operator(none, margin: base-sep * 0.5)"));
-    assert!(stdout.contains("math.attach([Cl], tr: [−], br: std.hide([−]))"));
+    assert!(scene(&stdout).contains("\"symbol\": \"Na\""));
+    assert!(scene(&stdout).contains("\"type\": \"component-break\""));
+    assert!(scene(&stdout).contains("\"charge\": -1"));
 }
 
 #[test]
@@ -186,9 +194,9 @@ fn dumps_component_labels_with_balanced_attachments() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("math.attach([H], tr: [+], br: std.hide([+]))"));
-    assert!(stdout.contains("[C#math.attach([H], b: [4], t: std.hide([4]))]"));
-    assert!(stdout.contains("math.attach([Cl], tr: [−], br: std.hide([−]))"));
+    assert!(scene(&stdout).contains("\"charge\": 1"));
+    assert!(scene(&stdout).contains("\"hydrogenCount\": 4"));
+    assert!(scene(&stdout).contains("\"charge\": -1"));
 }
 
 #[test]
@@ -203,8 +211,8 @@ fn dumps_sdf_file_selected_by_extension() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.starts_with("#let base-sep = 3em\n#skeletize({\n"));
-    assert!(stdout.contains("name: \"a0\""));
+    assert!(stdout.starts_with("#import \"@preview/alchemist:0.2.0\": *\n"));
+    assert!(scene(&stdout).contains("\"name\": \"a0\""));
 }
 
 #[test]
@@ -223,17 +231,20 @@ fn dumps_extended_sdf_bond_semantics_without_collapsing_to_single() {
     );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("#import \"@preview/cetz:0.5.2\""));
-    for function in [
-        "_molchemist-aromatic(",
-        "_molchemist-single-or-double(",
-        "_molchemist-single-or-aromatic(",
-        "_molchemist-double-or-aromatic(",
-        "_molchemist-wavy(",
-        "_molchemist-coordination-right(",
-        "_molchemist-hydrogen(",
+    assert!(stdout.contains("#import \"@preview/alchemist:0.2.0\": *"));
+    for kind in [
+        "aromatic",
+        "single-or-double",
+        "single-or-aromatic",
+        "double-or-aromatic",
+        "any",
+        "coordination-right",
+        "hydrogen",
     ] {
-        assert!(stdout.contains(function), "missing {function}");
+        assert!(
+            scene(&stdout).contains(&format!("\"bondType\": \"{kind}\"")),
+            "missing {kind}"
+        );
     }
     assert!(stdout.contains("mark: (end: \">\", fill: black)"));
     assert!(stdout.contains("mark: (start: \">\", fill: black)"));
@@ -255,18 +266,18 @@ fn dumps_stereochemistry_without_folding_or_dropping_semantics() {
     );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("_molchemist-crossed-double("));
-    assert!(stdout.contains("cram-filled-left("));
-    assert!(stdout.contains("fragment(\"H\", name: \"a1\")"));
-    assert!(stdout.contains("Stereo annotations: C CFG=1; OR7 (a0)"));
+    assert!(scene(&stdout).contains("\"bondType\": \"crossed-double\""));
+    assert!(scene(&stdout).contains("\"bondType\": \"cram-filled-left\""));
+    assert!(scene(&stdout).contains("\"element\": \"H\""));
+    assert!(scene(&stdout).contains("\"annotation\": \"CFG=1; OR7\""));
 }
 
 #[test]
 fn dumps_l_and_d_alanine_with_the_expected_absolute_bond_styles() {
     let cases = [
-        ("skeletal", "cram-filled-right(", "cram-dashed-right("),
-        ("abbreviate", "cram-filled-right(", "cram-dashed-right("),
-        ("full", "cram-filled-left(", "cram-dashed-left("),
+        ("skeletal", "cram-filled-right", "cram-dashed-right"),
+        ("abbreviate", "cram-filled-right", "cram-dashed-right"),
+        ("full", "cram-filled-left", "cram-dashed-left"),
     ];
 
     for (mode, l_style, d_style) in cases {
@@ -283,8 +294,14 @@ fn dumps_l_and_d_alanine_with_the_expected_absolute_bond_styles() {
 
         let l_source = String::from_utf8(l_alanine.stdout).unwrap();
         let d_source = String::from_utf8(d_alanine.stdout).unwrap();
-        assert!(l_source.contains(l_style), "L-alanine {mode}: {l_source}");
-        assert!(d_source.contains(d_style), "D-alanine {mode}: {d_source}");
+        assert!(
+            scene(&l_source).contains(l_style),
+            "L-alanine {mode}: {l_source}"
+        );
+        assert!(
+            scene(&d_source).contains(d_style),
+            "D-alanine {mode}: {d_source}"
+        );
         assert_ne!(l_source, d_source, "enantiomers collapsed in {mode}");
     }
 }
@@ -302,7 +319,7 @@ fn implicit_and_explicit_hydrogen_alanine_dump_the_same_center_orientation() {
 
     assert!(sources
         .iter()
-        .all(|source| source.contains("cram-filled-right(")));
+        .all(|source| scene(source).contains("cram-filled-right")));
 }
 
 #[test]
@@ -321,9 +338,9 @@ fn relayouts_sdf_records_with_collapsed_coordinates() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("cram-filled-"));
-    assert!(!stdout.contains("atom-sep: base-sep * 0, name:"));
+    assert!(!scene(&stdout).contains("\"lengthScale\": 0,"));
     assert!(!stdout.contains("NaN"));
-    assert!(!stdout.contains("inf"));
+    assert!(!scene(&stdout).contains("inf"));
 }
 
 #[test]
@@ -347,8 +364,12 @@ fn dumps_extended_chirality_as_native_geometry() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(!stdout.contains("Stereo annotations:"), "{smiles}");
-        assert_eq!(stdout.contains("cram-"), expects_stereo_bond, "{smiles}");
+        assert!(!scene(&stdout).contains("\"annotation\""), "{smiles}");
+        assert_eq!(
+            scene(&stdout).contains("cram-"),
+            expects_stereo_bond,
+            "{smiles}"
+        );
     }
 }
 
@@ -371,7 +392,7 @@ fn reads_direct_text_with_an_explicit_format() {
     assert!(output.stderr.is_empty());
     assert!(String::from_utf8(output.stdout)
         .unwrap()
-        .contains("fragment(\"N\""));
+        .contains("\"element\": \"N\""));
 }
 
 #[test]
@@ -455,8 +476,8 @@ fn auto_detects_and_dumps_v3000_input() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("math.attach([N], tr: [+], br: std.hide([+]))"));
-    assert!(stdout.contains("math.attach([O], tr: [−], br: std.hide([−]))"));
+    assert!(scene(&stdout).contains("\"charge\": 1"));
+    assert!(scene(&stdout).contains("\"charge\": -1"));
 }
 
 #[test]
@@ -534,17 +555,13 @@ fn dumps_ctfile_fidelity_overlays_without_warnings() {
     );
     assert!(output.stderr.is_empty());
     let source = String::from_utf8(output.stdout).unwrap();
-    assert!(source.contains("draw-skeleton(name: \"molchemist-structure\""));
-    assert!(source.contains("cetz.draw.on-layer(−1"));
-    assert!(source.contains("_molchemist-highlight-path"));
-    assert!(source.contains("molchemist-sgroup-3-right"));
-    assert!(source.contains("!\\[C,N\\]"));
-    assert!(source.contains("(H1) (s3) (u) (r2)"));
-    assert!(source.contains("rel: (0pt, base-sep * −0.36)"));
-    assert!(source.contains("text(size: 0.44em, fill: luma(38%))"));
-    assert!(!source.contains("implicit H >= 1"));
-    assert!(source.contains("[rn]"));
-    assert!(source.contains("text(size: 0.56em, fill: luma(32%))"));
+    let data = scene(&source);
+    assert!(data.contains("\"highlights\""));
+    assert!(data.contains("\"sgroups\""));
+    assert!(data.contains("\"symbol\": \"[C,N]\""));
+    assert!(data.contains("\"queryNegated\": true"));
+    assert!(data.contains("(H1) (s3) (u) (r2)"));
+    assert!(data.contains("\"label\": \"rn\""));
 }
 
 #[test]
@@ -614,8 +631,8 @@ fn real_rdkit_query_fixtures_preserve_atom_lists_and_constraints() {
 #[test]
 fn real_rdkit_ctfiles_preserve_bond_topology_and_sgroups() {
     for (fixture, expected_topology, marker) in [
-        ("rdkit/RingBondQuery.mol", 1, "[rn]"),
-        ("rdkit/ChainBondQuery.mol", 2, "[ch]"),
+        ("rdkit/RingBondQuery.mol", 1, "\"label\": \"rn\""),
+        ("rdkit/ChainBondQuery.mol", 2, "\"label\": \"ch\""),
     ] {
         let value = inspect_fixture(fixture, None);
         assert_eq!(value["bonds"][4]["topology"], expected_topology);
@@ -741,7 +758,9 @@ fn documentation_superatom_fixture_matches_the_real_regression_corpus() {
     );
     let documentation = include_str!("../../../package/docs/documentation.typ");
     assert!(documentation.contains("=== Multi-atom Superatom Contraction"));
-    assert!(documentation.contains("#render-mol(data, skeletal: true, fidelity: \"strict\")"));
+    assert!(documentation.contains("#comparison(\"superatoms\")"));
+    let example = include_str!("../../../package/docs/examples/superatoms.typ");
+    assert!(example.contains("render-mol(data, skeletal: true, fidelity: \"strict\""));
 }
 
 #[test]
@@ -827,9 +846,9 @@ fn real_rdkit_superatom_fixture_contracts_in_strict_mode() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let source = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(source.matches("fragment(").count(), 8);
-    assert!(source.contains("[NO₂]"));
-    assert!(source.contains("[COOH]"));
+    assert_eq!(scene(&source).matches("\"type\": \"fragment\"").count(), 8);
+    assert!(scene(&source).contains("\"element\": \"NO₂\""));
+    assert!(scene(&source).contains("\"element\": \"COOH\""));
 }
 
 #[test]
@@ -922,7 +941,7 @@ fn attachment_link_node_and_collection_fixtures_preserve_standard_semantics() {
 }
 
 #[test]
-fn applies_atom_separation_and_indentation_options() {
+fn applies_atom_separation_option() {
     let output = molchemist()
         .args([
             "dump",
@@ -932,15 +951,13 @@ fn applies_atom_separation_and_indentation_options() {
             "abbreviate",
             "--atom-sep",
             "4.5em",
-            "--indent",
-            "4",
         ])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.starts_with("#let base-sep = 4.5em\n#skeletize({\n    "));
+    assert!(stdout.ends_with("_render-graphic(_scene, 4.5em, config: _scene-config))"));
 }
 
 #[test]
@@ -959,7 +976,7 @@ fn reads_smiles_from_stdin_when_no_source_is_given() {
     assert!(output.stderr.is_empty());
     assert!(String::from_utf8(output.stdout)
         .unwrap()
-        .contains("fragment(\"OH\""));
+        .contains("\"element\": \"OH\""));
 }
 
 #[test]
@@ -983,9 +1000,9 @@ fn writes_a_standalone_document_to_a_file() {
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
     let document = fs::read_to_string(&path).unwrap();
-    assert!(document.starts_with("#import \"@preview/alchemist:0.2.0\": *\n"));
+    assert!(document.contains("#import \"@preview/alchemist:0.2.0\": *\n"));
     assert!(document.contains("#set page(width: auto, height: auto, margin: 3mm)"));
-    assert!(document.ends_with("})"));
+    assert!(document.ends_with("config: _scene-config))"));
     fs::remove_file(path).unwrap();
 }
 

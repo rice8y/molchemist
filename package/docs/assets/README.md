@@ -8,6 +8,10 @@ The files `sdf-version-records.sdf`, `bond-semantics.sdf`, `stereochemistry.sdf`
 
 `highlight-shapes.sdf` contains five independently selectable records covering a hidden skeletal atom, a long query glyph, a diagonal bond capsule, a connected atom/bond union, and disconnected highlight regions. The code and its typeset result are defined directly in `../documentation.typ`.
 
+## R-group Comparison
+
+`rgroup-alternatives.mol` is a synthetic V3000 RGfile authored for this repository. It contains a phenyl root with one R-group position, methoxy and cyano member alternatives, attachment-site attributes, and an RLOGIC condition. The manual and README use this same record to compare the root with the complete alternative panels.
+
 ## RDKit / ACD Labs Superatom Fixture
 
 - File: `Sgroups_Abbreviations.mol`

@@ -1,44 +1,7 @@
-#let mol-plugin = plugin("../../wasm/molchemist_plugin.wasm")
-#let smiles-plugin = plugin("../../wasm/molchemist_smiles_plugin.wasm")
+#import "../../../../package/lib.typ": render-mol, render-smiles
 
-#let dump-smiles(smiles, mode) = {
-  let layout-input = if mode == "full" {
-    mol-plugin.smiles_to_full_layout_input(bytes(smiles))
-  } else {
-    mol-plugin.smiles_to_layout_input(bytes(smiles))
-  }
-  let coords = smiles-plugin.layout_coordinates(layout-input)
-  str(mol-plugin.smiles_to_code(
-    bytes(smiles),
-    coords,
-    bytes(mode),
-    bytes("3em"),
-    bytes("2"),
-  ))
-}
-
-#let dump-sdf(sdf, mode, record: "1") = {
-  let record = bytes(record)
-  let layout-input = mol-plugin.sdf_record_to_layout_input(sdf, record)
-  if layout-input.len() == 0 {
-    return str(mol-plugin.sdf_record_to_code(
-      sdf,
-      bytes(mode),
-      record,
-      bytes("3em"),
-      bytes("2"),
-    ))
-  }
-  let coords = smiles-plugin.layout_coordinates(layout-input)
-  str(mol-plugin.sdf_record_to_code_with_coords(
-    sdf,
-    coords,
-    bytes(mode),
-    record,
-    bytes("3em"),
-    bytes("2"),
-  ))
-}
+#let dump-smiles(smiles, mode) = render-smiles(smiles, skeletal: mode == "skeletal", abbreviate: mode == "abbreviate", dump: true).text
+#let dump-sdf(sdf, mode, record: "1") = render-mol(sdf, record: int(record), skeletal: mode == "skeletal", abbreviate: mode == "abbreviate", dump: true).text
 
 #metadata((
   sdf: dump-sdf(

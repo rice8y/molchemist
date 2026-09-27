@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use molchemist_cli::{
-    format_standalone_code, Generator, RenderMode, StandaloneOptions, DEFAULT_ALCHEMIST_IMPORT,
-};
+use molchemist_cli::{format_standalone_code, Generator, RenderMode, StandaloneOptions};
 
 #[derive(Parser)]
 #[command(name = "molchemist", version, about)]
@@ -26,6 +24,35 @@ enum Command {
 
 #[derive(Args)]
 struct DumpArgs {
+    /// Expand all known superatoms instead of contracting their labels.
+    #[arg(long)]
+    expand_superatoms: bool,
+    /// Infer tetrahedral wedge orientation from nondegenerate 3D coordinates.
+    #[arg(long)]
+    infer_stereo: bool,
+    /// Coordinate policy. Avoid enlarges spacing using the actual font metrics.
+    #[arg(long, default_value = "avoid", value_parser = ["coordinates", "avoid", "reflow"])]
+    layout: String,
+
+    /// Preserve source component positions or pack disconnected components.
+    #[arg(long, default_value = "pack", value_parser = ["pack", "preserve"])]
+    components: String,
+
+    /// Reject unresolved label collisions at Typst compilation time.
+    #[arg(long)]
+    strict_collisions: bool,
+
+    /// Infer missing reaction atom correspondences; ambiguity is reported.
+    #[arg(long)]
+    infer_mapping: bool,
+
+    /// Maximum number of states visited by the atom-correspondence search.
+    #[arg(long, default_value = "200000")]
+    mapping_search_limit: NonZeroUsize,
+
+    /// Text placed below the reaction arrow.
+    #[arg(long, default_value = "")]
+    conditions: String,
     /// Input file. Use '-' or omit it to read standard input.
     #[arg(value_name = "INPUT", conflicts_with_all = ["text", "smiles"])]
     input: Option<PathBuf>,
@@ -66,14 +93,6 @@ struct DumpArgs {
     #[arg(long, default_value = "3mm", requires = "standalone", value_parser = parse_typst_length)]
     page_margin: String,
 
-    /// Alchemist package import used by standalone documents.
-    #[arg(long, default_value = DEFAULT_ALCHEMIST_IMPORT, requires = "standalone", value_parser = parse_import)]
-    alchemist_import: String,
-
-    /// Number of spaces used for each indentation level.
-    #[arg(long, default_value_t = 2, value_parser = parse_indent)]
-    indent: usize,
-
     /// Handling of parsed features that the current renderer cannot depict faithfully.
     #[arg(long, value_enum, default_value_t = FidelityMode::Warn)]
     fidelity: FidelityMode,
@@ -81,6 +100,10 @@ struct DumpArgs {
 
 #[derive(Args)]
 struct InspectArgs {
+    #[arg(long)]
+    infer_mapping: bool,
+    #[arg(long, default_value = "200000")]
+    mapping_search_limit: NonZeroUsize,
     /// Molfile/SDF input file. Use '-' or omit it to read standard input.
     #[arg(value_name = "INPUT", conflicts_with = "text")]
     input: Option<PathBuf>,
@@ -113,6 +136,25 @@ enum InputFormat {
     Mol,
     Sdf,
     Smiles,
+    Mol2,
+    Rxn,
+    ReactionSmiles,
+    Rgroup,
+}
+
+impl InputFormat {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Mol => "mol",
+            Self::Sdf => "sdf",
+            Self::Smiles => "smiles",
+            Self::Mol2 => "mol2",
+            Self::Rxn => "rxn",
+            Self::ReactionSmiles => "reaction-smiles",
+            Self::Rgroup => "rgroup",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -165,50 +207,154 @@ fn run(cli: Cli) -> Result<(), String> {
 }
 
 fn dump(args: DumpArgs) -> Result<(), String> {
-    let input = read_input(&args)?;
-    let format = detect_format(&input, args.format)?;
+    let mut input = read_input(&args)?;
+    let mut format = detect_format(&input, args.format)?;
     let mode = args.mode.into();
     let mut generator = Generator::new()
         .map_err(|error| format!("could not initialize the conversion engine: {error}"))?;
+
+    let config = serde_json::json!({"layout": args.layout, "infer-stereo": args.infer_stereo, "components": args.components, "collision-policy": if args.strict_collisions { "error" } else { "report" }});
+    if format == InputFormat::Rgroup {
+        require_first_record(args.record, "RGfile")?;
+        let document = generator.inspect_rgroup(&input.content)?;
+        if args.fidelity != FidelityMode::Ignore {
+            let root = document["root"].as_str().ok_or("Missing R-group root")?;
+            apply_fidelity_policy(
+                &generator.inspect_sdf_record_json(root, 1, false)?,
+                args.fidelity,
+            )?;
+            for member in document["members"]
+                .as_array()
+                .ok_or("Missing R-group members")?
+            {
+                let data = member["data"].as_str().ok_or("Missing R-group member")?;
+                let mut inspection: serde_json::Value =
+                    serde_json::from_str(&generator.inspect_sdf_record_json(data, 1, false)?)
+                        .map_err(|e| e.to_string())?;
+                inspection["diagnostics"]
+                    .as_array_mut()
+                    .ok_or("Missing diagnostics")?
+                    .retain(|d| d["code"] != "rgroup-attachment-context-not-supported");
+                apply_fidelity_policy(&inspection.to_string(), args.fidelity)?;
+            }
+        }
+        let style = config.clone();
+        let code = generator.rgroup_to_code(&input.content, mode, &args.atom_sep, &style)?;
+        let code = if args.standalone {
+            format_standalone_code(
+                &code,
+                &StandaloneOptions {
+                    page_margin: args.page_margin,
+                },
+            )
+        } else {
+            code
+        };
+        return write_output(args.output.as_deref(), code.as_bytes());
+    }
+    if matches!(format, InputFormat::Rxn | InputFormat::ReactionSmiles) {
+        require_first_record(args.record, "reaction")?;
+        let analysis = generator.inspect_reaction(
+            &input.content,
+            format.key(),
+            args.infer_mapping,
+            args.mapping_search_limit.get(),
+        )?;
+        if args.fidelity != FidelityMode::Ignore {
+            for side in ["reactants", "agents", "products"] {
+                for molecule in analysis["reaction"][side]
+                    .as_array()
+                    .ok_or("Missing reaction side")?
+                {
+                    if molecule["format"] == "mol" {
+                        let data = molecule["data"]
+                            .as_str()
+                            .ok_or("Missing reaction molecule")?;
+                        apply_fidelity_policy(
+                            &generator.inspect_sdf_record_json(data, 1, false)?,
+                            args.fidelity,
+                        )?;
+                    }
+                }
+            }
+        }
+        if analysis["ambiguous"] == true || analysis["searchComplete"] == false {
+            let message = "Reaction mapping is ambiguous or the search limit was reached; inspect the mapping before relying on its reaction centers";
+            if args.fidelity == FidelityMode::Strict {
+                return Err(message.into());
+            }
+            if args.fidelity == FidelityMode::Warn {
+                eprintln!("warning[mapping]: {message}");
+            }
+        }
+        let style = config.clone();
+        let code = generator.reaction_to_code(
+            &analysis,
+            mode,
+            &args.atom_sep,
+            &style,
+            &args.conditions,
+        )?;
+        let code = if args.standalone {
+            format_standalone_code(
+                &code,
+                &StandaloneOptions {
+                    page_margin: args.page_margin,
+                },
+            )
+        } else {
+            code
+        };
+        return write_output(args.output.as_deref(), code.as_bytes());
+    }
+    let mut record = if format == InputFormat::Mol2 {
+        input.content = generator.mol2_to_sdf(&input.content, args.record.get())?;
+        format = InputFormat::Sdf;
+        1
+    } else {
+        args.record.get()
+    };
+    if args.expand_superatoms {
+        if !matches!(format, InputFormat::Mol | InputFormat::Sdf) {
+            return Err("--expand-superatoms requires CTfile or MOL2 input".into());
+        }
+        input.content = generator.expand_superatoms(&input.content, record)?;
+        record = 1;
+    }
 
     if args.fidelity != FidelityMode::Ignore
         && matches!(format, InputFormat::Mol | InputFormat::Sdf)
     {
         let inspection = generator
-            .inspect_sdf_record_json(&input.content, args.record.get(), false)
+            .inspect_sdf_record_json(&input.content, record, false)
             .map_err(|error| format!("failed to inspect {format}: {error}"))?;
         apply_fidelity_policy(&inspection, args.fidelity)?;
     }
 
-    let generated = match format {
-        InputFormat::Mol => {
-            require_first_record(args.record, "Molfile")?;
-            generator.sdf_to_code(&input.content, mode, &args.atom_sep, args.indent)
-        }
-        InputFormat::Sdf => generator.sdf_record_to_code(
-            &input.content,
-            mode,
-            args.record.get(),
-            &args.atom_sep,
-            args.indent,
-        ),
-        InputFormat::Smiles => {
-            require_first_record(args.record, "SMILES")?;
-            let smiles = input.content.trim();
-            if smiles.is_empty() {
-                return Err("SMILES input is empty".to_string());
-            }
-            generator.smiles_to_code(smiles, mode, &args.atom_sep, args.indent)
-        }
-        InputFormat::Auto => unreachable!("auto format is resolved before conversion"),
+    if format != InputFormat::Sdf {
+        require_first_record(args.record, &format.to_string())?;
     }
-    .map_err(|error| format!("failed to convert {format}: {error}"))?;
+    if format == InputFormat::Smiles {
+        input.content = input.content.trim().to_string();
+        if input.content.is_empty() {
+            return Err("SMILES input is empty".into());
+        }
+    }
+    let generated = generator
+        .coordinate_to_code(
+            &input.content,
+            format.key(),
+            mode,
+            record,
+            &args.atom_sep,
+            &config,
+        )
+        .map_err(|error| format!("failed to convert {format}: {error}"))?;
 
     let generated = if args.standalone {
         format_standalone_code(
             &generated,
             &StandaloneOptions {
-                alchemist_import: args.alchemist_import,
                 page_margin: args.page_margin,
             },
         )
@@ -222,9 +368,43 @@ fn dump(args: DumpArgs) -> Result<(), String> {
 fn inspect(args: InspectArgs) -> Result<(), String> {
     let input = read_inspect_input(&args)?;
     let format = detect_format(&input, args.format)?;
+    let mut generator = Generator::new().map_err(|e| e.to_string())?;
+    if matches!(format, InputFormat::Rxn | InputFormat::ReactionSmiles) {
+        require_first_record(args.record, "reaction")?;
+        let analysis = generator.inspect_reaction(
+            &input.content,
+            format.key(),
+            args.infer_mapping,
+            args.mapping_search_limit.get(),
+        )?;
+        let json = if args.compact {
+            serde_json::to_string(&analysis)
+        } else {
+            serde_json::to_string_pretty(&analysis)
+        }
+        .map_err(|e| e.to_string())?;
+        return write_output(args.output.as_deref(), format!("{json}\n").as_bytes());
+    }
     match format {
+        InputFormat::Rgroup => {
+            require_first_record(args.record, "RGfile")?;
+            let doc = generator.inspect_rgroup(&input.content)?;
+            let json = if args.compact {
+                serde_json::to_string(&doc)
+            } else {
+                serde_json::to_string_pretty(&doc)
+            }
+            .map_err(|e| e.to_string())?;
+            return write_output(args.output.as_deref(), format!("{json}\n").as_bytes());
+        }
         InputFormat::Mol => require_first_record(args.record, "Molfile")?,
         InputFormat::Sdf => {}
+        InputFormat::Mol2 => {
+            let sdf = generator.mol2_to_sdf(&input.content, args.record.get())?;
+            let json = generator.inspect_sdf_record_json(&sdf, 1, !args.compact)?;
+            return write_output(args.output.as_deref(), format!("{json}\n").as_bytes());
+        }
+        InputFormat::Rxn | InputFormat::ReactionSmiles => unreachable!(),
         InputFormat::Smiles => {
             return Err("inspect currently accepts Molfile or SDF input, not SMILES".to_string())
         }
@@ -368,6 +548,11 @@ fn detect_format(input: &Input, requested: InputFormat) -> Result<InputFormat, S
     if requested != InputFormat::Auto {
         return Ok(requested);
     }
+    if input.content.contains("M  V30 BEGIN RGROUP ")
+        || input.content.trim_start().starts_with("$MDL")
+    {
+        return Ok(InputFormat::Rgroup);
+    }
 
     if let Some(extension) = input
         .path
@@ -377,6 +562,9 @@ fn detect_format(input: &Input, requested: InputFormat) -> Result<InputFormat, S
         .map(str::to_ascii_lowercase)
     {
         match extension.as_str() {
+            "mol2" => return Ok(InputFormat::Mol2),
+            "rxn" => return Ok(InputFormat::Rxn),
+            "rsmi" => return Ok(InputFormat::ReactionSmiles),
             "mol" => return Ok(InputFormat::Mol),
             "sdf" => return Ok(InputFormat::Sdf),
             "smi" | "smiles" => return Ok(InputFormat::Smiles),
@@ -384,6 +572,15 @@ fn detect_format(input: &Input, requested: InputFormat) -> Result<InputFormat, S
         }
     }
 
+    if input.content.trim_start().starts_with("$RXN") {
+        return Ok(InputFormat::Rxn);
+    }
+    if input.content.contains("@<TRIPOS>MOLECULE") {
+        return Ok(InputFormat::Mol2);
+    }
+    if input.content.trim().split('>').count() == 3 && input.content.lines().count() <= 1 {
+        return Ok(InputFormat::ReactionSmiles);
+    }
     if input.content.contains("M  END")
         && (input.content.contains("V2000") || input.content.contains("V3000"))
     {
@@ -403,7 +600,7 @@ fn detect_format(input: &Input, requested: InputFormat) -> Result<InputFormat, S
         return Ok(InputFormat::Smiles);
     }
 
-    Err("could not detect input format; pass --format mol, sdf, or smiles".to_string())
+    Err("could not detect input format; pass --format mol, sdf, smiles, mol2, rxn, reaction-smiles, or rgroup".to_string())
 }
 
 fn require_first_record(record: NonZeroUsize, format: &str) -> Result<(), String> {
@@ -411,7 +608,7 @@ fn require_first_record(record: NonZeroUsize, format: &str) -> Result<(), String
         Ok(())
     } else {
         Err(format!(
-            "--record can only exceed 1 for SDF input, not {format}"
+            "--record can only exceed 1 for SDF or MOL2 input, not {format}"
         ))
     }
 }
@@ -445,33 +642,22 @@ fn parse_typst_length(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-fn parse_import(value: &str) -> Result<String, String> {
-    if value.is_empty() || value.contains(['"', '\n', '\r']) {
-        Err("alchemist import must be a non-empty package or file specifier".to_string())
-    } else {
-        Ok(value.to_string())
-    }
-}
-
-fn parse_indent(value: &str) -> Result<usize, String> {
-    let width = value
-        .parse::<usize>()
-        .map_err(|_| "indent must be an integer from 1 through 8".to_string())?;
-    if (1..=8).contains(&width) {
-        Ok(width)
-    } else {
-        Err("indent must be an integer from 1 through 8".to_string())
-    }
-}
-
 impl std::fmt::Display for InputFormat {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(match self {
-            Self::Auto => "auto input",
-            Self::Mol => "Molfile input",
-            Self::Sdf => "SDF input",
-            Self::Smiles => "SMILES input",
-        })
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} input",
+            match self {
+                Self::Smiles => "SMILES",
+                Self::Sdf => "SDF",
+                Self::Mol => "Molfile",
+                Self::Mol2 => "MOL2",
+                Self::Rxn => "RXN",
+                Self::ReactionSmiles => "Reaction SMILES",
+                Self::Rgroup => "RGfile",
+                Self::Auto => "automatic",
+            }
+        )
     }
 }
 

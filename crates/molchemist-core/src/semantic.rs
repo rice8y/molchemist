@@ -1758,7 +1758,10 @@ fn fidelity_diagnostics(
         .iter()
         .filter(|collection| {
             collection.kind == "highlight"
-                && (!collection.sgroup_source_ids.is_empty()
+                && (collection
+                    .sgroup_source_ids
+                    .iter()
+                    .any(|id| !sgroups.iter().any(|g| g.id == *id && g.kind != "unknown"))
                     || !collection.object3d_source_ids.is_empty()
                     || !collection.rgroup_ids.is_empty()
                     || !collection.members.is_empty())
@@ -1770,7 +1773,7 @@ fn fidelity_diagnostics(
             &mut seen,
             "highlight-members-not-depicted",
             "highlight",
-            "Non-atom/bond HILITE members are preserved by inspection but are not depicted",
+            "Unresolved HILITE members are preserved by inspection but are not depicted",
             partially_depicted_highlights
                 .iter()
                 .flat_map(|collection| collection.atom_source_ids.iter().copied())

@@ -18,3 +18,25 @@ Use `--limit 3` for a quick downloader smoke test, `--refresh` to replace cached
 The generated manifest, PNG files, Typst source, and PDF are ignored by Git and must not be committed. PubChem records incorporate data from many contributors, so users remain responsible for the provenance and licensing restrictions of downloaded content. The script stays below PubChem's documented request-rate limit and retries temporary throttling responses.
 
 `check-pubchem-visual-regression.py` compiles the side-by-side PubChem/molchemist comparison sheet, rasterizes it with `pdftoppm`, and compares exact page hashes against a local ignored baseline. On the first run, inspect `.local-tests/pubchem-visual/visual-regression/current.pdf`, then run `python3 scripts/check-pubchem-visual-regression.py --accept`; subsequent runs fail when pages are added, removed, or changed. Baselines are intentionally machine-local because Typst, Poppler, and font updates can alter raster output without changing molecular semantics.
+
+## Rust plugin and figure regression checks
+
+When only Rust or shared Typst renderer code has changed, rebuild and synchronize the core WASM module without rebuilding the unchanged Coordgen C++ module:
+
+```sh
+bash scripts/build-core-wasm.sh
+```
+
+Use `scripts/build-wasm.sh` with its pinned Emscripten version for C++ changes.
+
+`python3 scripts/check-rendering.py` checks committed, reviewed figures with Typst 0.15.1 and bundled fonts. Inspect changed images under `target/visual-regression` before running `--accept` to update the baseline. The script compares decoded pixel samples with a small antialiasing tolerance.
+
+## Documentation comparison figures
+
+`package/docs/examples/` contains the executable sources shared by the README comparisons and manual. To regenerate a PNG with Typst 0.15.1 and bundled fonts, run the following command from the repository root; use `reaction`, `superatoms`, or `rgroups` for the other figures. The matching code blocks in both READMEs use the same source, with asset paths relative to each README directory.
+
+```sh
+typst compile --root . --ignore-system-fonts --ppi 192 \
+  --input figure=layout package/docs/render-comparison.typ \
+  package/images/comparison-layout.png
+```

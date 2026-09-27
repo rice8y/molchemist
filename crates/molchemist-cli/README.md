@@ -1,8 +1,8 @@
 # molchemist-cli
 
-`molchemist-cli` converts Molfile, SDF, and SMILES input into formatted [`alchemist`](https://typst.app/universe/package/alchemist/) source. The installed executable is named `molchemist`.
+`molchemist-cli` converts Molfile, SDF, SMILES, MOL2, RXN, Reaction SMILES, and RGfile input into formatted [`alchemist`](https://typst.app/universe/package/alchemist/) source. The installed executable is named `molchemist`.
 
-The CLI embeds the same Rust parser and Coordgen WebAssembly modules shipped with the molchemist Typst package. With the default `3em` atom separation and two-space indentation, its output is byte-for-byte identical to the package's `dump: true` output.
+The CLI embeds the same Rust parser and Coordgen WebAssembly modules shipped with the molchemist Typst package. The package and CLI share one coordinate renderer, and equivalent configurations produce identical `dump` output.
 
 ## Install
 
@@ -40,24 +40,6 @@ Convert a SMILES string:
 molchemist dump --smiles 'CC(=O)Oc1ccccc1C(=O)O' --mode skeletal
 ```
 
-For example:
-
-```console
-$ molchemist dump --smiles 'CC(=O)O' --mode skeletal
-#let base-sep = 3em
-#skeletize({
-  hook("a0")
-  single(absolute: 29.79036703670196deg, atom-sep: base-sep * 1, name: "b0")
-  hook("a1")
-  branch({
-    double(absolute: 89.79373607661383deg, atom-sep: base-sep * 1.000062954206203, name: "b1")
-    fragment("O", name: "a2")
-  })
-  single(absolute: −30.20116835518715deg, atom-sep: base-sep * 0.9999817671902098, name: "b2")
-  fragment("OH", name: "a3")
-})
-```
-
 SMILES input is parsed strictly. Malformed branch, dot, bond, bracket-property, charge, isotope, atom-class, directional-bond, and aromatic notation returns an error instead of being normalized silently.
 
 Input can also come from standard input or `--text`:
@@ -79,7 +61,7 @@ molchemist dump \
 typst compile acetic-acid.typ
 ```
 
-The standalone wrapper defaults to `@preview/alchemist:0.2.0`, a `3mm` page margin, and `3em` atom separation. Override these with `--alchemist-import`, `--page-margin`, and `--atom-sep`.
+Generated source imports `@preview/alchemist:0.2.0`. The standalone wrapper sets a `3mm` page margin. Use `--page-margin` and `--atom-sep` to change the page margin and bond-length unit.
 
 For a multi-record SDF, select a one-based record with `--record`:
 
@@ -95,9 +77,9 @@ molchemist inspect compounds.sdf --record 3
 
 Inspection preserves the header, stable source atom/bond IDs, enhanced stereo groups, SGroups with original type codes, complete COLLECTION names and member lists, normalized V2000/V3000 query metadata, duplicate and multiline SDF properties in source order, the exact selected record, and diagnostics for remaining depiction gaps. V3000 `sourceId` values are the original CTAB IDs; V2000 uses one-based source positions. Pass `--compact` for single-line JSON.
 
-`dump` uses `--fidelity warn` by default. Warnings go to standard error without contaminating generated source on standard output. Use `--fidelity strict` to reject any known unsupported depiction feature or `--fidelity ignore` to preserve the earlier silent behavior.
+`dump` uses `--fidelity warn` by default. Warnings go to standard error without contaminating generated source on standard output. Use `--fidelity strict` to reject any known unsupported depiction feature or `--fidelity ignore` to omit those diagnostics.
 
-Generated source depicts CTfile atom lists and query constraints, R-group labels, ring/chain bond topology, SGroup brackets and labels, contracted multi-atom superatoms, variable-attachment bonds, link nodes, and V3000 atom/bond HILITE collections. Contracted superatoms reconnect crossing bonds at a labelled graph node, use explicit SAP atoms for placement, and project highlight membership onto the contracted glyph. Arbitrary user-defined collections and non-atom/bond HILITE members remain inspection-only and are diagnostic in strict mode. The same overlay code is included in `--standalone` output. Reaction-center flags remain diagnostic until the reaction rendering stage is implemented.
+Generated source depicts CTfile atom lists and query constraints, R-group labels, ring/chain bond topology, SGroup brackets and labels, contracted multi-atom superatoms, variable-attachment bonds, link nodes, and V3000 atom/bond HILITE collections. Contracted superatoms reconnect crossing bonds at a labelled graph node, use explicit SAP atoms for placement, and project highlight membership onto the contracted glyph. Known SGroup HILITE membership projects onto its atoms and bonds. User-defined collections and unresolved 3D-object, external R-group or generic members remain diagnostic in strict mode. The same overlay code is included in `--standalone` output. Standalone-molecule reaction-center query flags remain diagnostic; reaction rendering highlights graph differences across mapped reactants and products.
 
 Highlight behavior has dedicated semantic and SVG-shape regressions. The corpus separates atom-only, long-query-glyph, bond-only, connected, and disconnected selections, and also includes RDKit/Bingo's real `v3k.crash1.mol`. Run them with:
 
@@ -112,7 +94,7 @@ Each selected Molfile/SDF record is detected as V2000 or V3000. Empty structures
 
 Extended SDF bond orders are preserved in generated source: aromatic and query bonds use distinct dashed/dotted forms, any and `either` bonds are wavy, coordination bonds retain their arrow direction, hydrogen bonds are dotted, and undefined double-bond geometry is crossed. Wedge/dash bonds to explicit hydrogen remain visible in abbreviated and skeletal modes. SDF atom parity, enhanced stereo groups, and extended OpenSMILES chirality classes are retained as annotations in generated source. The generated helpers are included automatically, including in `--standalone` output.
 
-Disconnected Molfile/SDF graphs and dot-separated SMILES retain every component. Generated Alchemist source places components side by side with a neutral `operator(none, ...)` boundary:
+Disconnected Molfile/SDF graphs and dot-separated SMILES retain every component. The renderer packs disconnected components side by side; `--components preserve` retains their source positions:
 
 ```sh
 molchemist dump --smiles '[Na+].[Cl-]' --mode abbreviate
@@ -127,6 +109,23 @@ The three rendering modes match the Typst API:
 `--format auto` first uses an explicit input kind, then the file extension, then the content. Supported extensions are `.mol`, `.sdf`, `.smi`, and `.smiles`. Pass `--format` when piped or extensionless input is ambiguous.
 
 Run `molchemist dump --help` or `molchemist inspect --help` for the complete option list. Generated source and inspection JSON are written exclusively to standard output; diagnostics are written to standard error, so shell redirection is safe.
+
+## Layout, reactions, and R-groups
+
+```sh
+molchemist dump molecule.sdf --layout avoid --strict-collisions --standalone
+molchemist dump molecule.mol --layout reflow --infer-stereo --standalone
+molchemist dump molecule.mol2 --layout coordinates --components preserve
+molchemist dump alternatives.mol --format rgroup --fidelity strict
+molchemist dump reaction.rxn --conditions oxidation --standalone
+molchemist inspect --text 'CCO>>CC=O' --infer-mapping
+```
+
+`--layout` accepts `avoid` (default), `coordinates`, and `reflow`. The coordinate renderer measures actual font bounds and clips bonds at labels. `avoid` increases spacing; `reflow` also regenerates CTfile coordinates. `--strict-collisions` rejects remaining measured atom-label collisions when the output is compiled; the default layout is `avoid`. `--expand-superatoms` depicts the source atoms of SUP groups.
+
+MOL2 source text is preserved as a JSON string in the `MOL2_SOURCE` property. Partial charges are retained without rounding them into formal charges. RGfile inspection preserves `rawSource` and all member alternatives. Reaction mapping inference is optional, respects supplied maps, and reports ambiguity and search-limit exhaustion. `--fidelity strict` rejects those cases and unsupported CTfile features in reaction and R-group components. Use `--mapping-search-limit` to change the mapping search budget.
+
+The [manual](../../package/docs/documentation.pdf) documents layout configuration, supported stereochemistry, input formats, and inference limits.
 
 ## License
 

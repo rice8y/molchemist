@@ -19,7 +19,7 @@ if [ ! -d "$docs_root" ]; then
   exit 1
 fi
 
-echo "[build] replacing starter package with top-level files from molchemist package"
+echo "[build] replacing starter package with runtime files from molchemist package"
 rm -rf "${docs_root}/package"
 mkdir -p "${docs_root}/package"
 
@@ -28,6 +28,8 @@ find package \
   -maxdepth 1 \
   -type f \
   -exec cp -p {} "${docs_root}/package/" \;
+
+cp -Rp package/src "${docs_root}/package/src"
 
 export PATH="$repo_root/.bin:$HOME/.cargo/bin:/rust/bin:$PATH"
 
