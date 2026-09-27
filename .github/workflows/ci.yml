@@ -62,3 +62,8 @@ jobs:
         run: cargo test --locked -p molchemist-cli --test cli -- --ignored
       - name: Check Typst and CLI parity
         run: cargo test --locked -p molchemist-cli --test wasm_parity typst_and_cli_outputs_match_exactly -- --ignored
+      - name: Compile extended input and coordinate renderers
+        run: cargo test --locked -p molchemist-cli --test extended -- --ignored
+      - name: Check reviewed figure pixels
+        if: matrix.typst == '0.15.1'
+        run: python3 scripts/check-rendering.py

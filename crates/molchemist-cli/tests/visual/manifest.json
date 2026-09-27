@@ -1,0 +1,17 @@
+{
+  "typst": "0.15.1",
+  "ppi": 144,
+  "systemFonts": false,
+  "pages": [
+    "page-1.png",
+    "page-10.png",
+    "page-2.png",
+    "page-3.png",
+    "page-4.png",
+    "page-5.png",
+    "page-6.png",
+    "page-7.png",
+    "page-8.png",
+    "page-9.png"
+  ]
+}
