@@ -9,7 +9,7 @@ Molfile/SDF parsing is powered by [`sdfrust`](https://github.com/hfooladi/sdfrus
 This SDF example uses the bundled PubChem record for CID 93406:
 
 ```typ
-#import "@preview/molchemist:0.1.5": render-mol, render-smiles
+#import "@preview/molchemist:0.1.5": *
 
 #let molecule = read("Structure2D_COMPOUND_CID_93406.sdf")
 #render-mol(molecule, abbreviate: true)
@@ -59,19 +59,101 @@ Source data: [PubChem Compound CID 241](https://pubchem.ncbi.nlm.nih.gov/compoun
 
 Appearance is controlled through the `config` dictionary passed to Alchemist.
 
-## CTfile fidelity
+## Layout, reactions, and R-groups
 
-This real ACD/Labs fixture distributed by RDKit contains two multi-atom `SUP` SGroups. `inspect-mol` preserves the source semantics while strict rendering contracts them to `NO₂` and `COOH` glyphs:
+### Coordinate spacing
+
+The same isotope-labelled molecule is drawn at `atom-sep: 1.2em` in both panels. `layout: "coordinates"` retains the crowded spacing; the default `"avoid"` increases it to clear measured labels and retain visible bond lengths. `layout: "reflow"` additionally regenerates SDF coordinates.
 
 ```typ
-#import "@preview/molchemist:0.1.5": inspect-mol, render-mol
-
-#let data = read("Sgroups_Abbreviations.mol", encoding: none)
-#let semantic = inspect-mol(data)
-#render-mol(data, skeletal: true, fidelity: "strict")
+#let molecule = "[13CH3:7]C(=O)O"
+#context {
+  let first = render-smiles(molecule, abbreviate: true,
+    config: (layout: "coordinates", atom-sep: 1.2em))
+  let second = render-smiles(molecule, abbreviate: true,
+    config: (layout: "avoid", atom-sep: 1.2em))
+  let first-width = measure(first).width
+  let second-width = measure(second).width
+  let width = calc.max(first-width, second-width)
+  box(width: 2 * width + 10mm, {
+    grid(columns: (width, width), column-gutter: 10mm, align: center,
+      [*Coordinates*], [*Avoid*])
+    v(3mm)
+    h((width - first-width) / 2)
+    first
+    h(width - (first-width + second-width) / 2 + 10mm)
+    second
+    h((width - second-width) / 2)
+  })
+}
 ```
 
-![Typeset RDKit ACD/Labs SGroup fixture](package/images/readme-sgroup-abbreviations.png)
+![Coordinates and avoid compared at the same font size and atom separation](package/images/comparison-layout.png)
+
+### Reaction-center highlighting
+
+Both rows show 1-bromopropane becoming 1-propanol. Highlighting marks the broken C–Br bond and the formed C–O bond, plus their endpoint element symbols. Atom and bond backgrounds form continuous regions. The C–C backbone, hydrogen labels, and atom-map numbers remain unhighlighted. `highlight-center` switches this highlighting on or off.
+
+```typ
+#let reaction = "[CH3:1][CH2:2][CH2:3]Br>>[CH3:1][CH2:2][CH2:3]O"
+#grid(
+  columns: 2, column-gutter: 5mm, row-gutter: 6mm,
+  align: (left + horizon, left + horizon),
+  [*Highlight off*], render-reaction(reaction, highlight-center: false),
+  [*Highlight on*], render-reaction(reaction, highlight-center: true),
+)
+```
+
+![Reaction-center highlighting disabled and enabled](package/images/comparison-reaction.png)
+
+### R-group alternatives
+
+The same RGfile supplies both panels: its root structure on the left, and the root plus methoxy/cyano alternatives, numbered attachment symbols, and readable occurrence conditions on the right.
+
+```typ
+#let data = read("package/docs/assets/rgroup-alternatives.mol")
+#let groups = inspect-rgroup(data)
+#let root = render-mol(groups.root, skeletal: true)
+#let alternatives = render-rgroup(data)
+#grid(
+  columns: 2, gutter: 10mm, align: center + top,
+  [*Root only* #v(3mm) #root],
+  [*Root and alternatives* #v(3mm) #alternatives],
+)
+```
+
+![R-group root compared with the root and all alternatives](package/images/comparison-rgroups.png)
+
+The R-group example uses the bundled [synthetic RGfile](package/docs/assets/rgroup-alternatives.mol). MOL2, RXN, optional atom correspondence, and 3D stereo projection are also supported; see the manual for their APIs and inference limits.
+
+## CTfile fidelity
+
+This ACD/Labs fixture distributed by RDKit contains two multi-atom `SUP` SGroups. Both panels use the same record: the default contracts them to `NO₂` and `COOH`, while `sgroups: "expanded"` displays their atoms and bonds, including the hydroxyl H inferred from ordinary valence. The two views share a scaffold baseline. `inspect-mol` retains the source semantics in either case.
+
+```typ
+#let data = read("package/docs/assets/Sgroups_Abbreviations.mol")
+#context {
+  let first = render-mol(data, skeletal: true, fidelity: "strict",
+    config: (baseline-atom: "a0"))
+  let second = render-mol(data, skeletal: true, fidelity: "strict",
+    config: (sgroups: "expanded", baseline-atom: "a0"))
+  let first-width = measure(first).width
+  let second-width = measure(second).width
+  let width = calc.max(first-width, second-width)
+  box(width: 2 * width + 10mm, {
+    grid(columns: (width, width), column-gutter: 10mm, align: center,
+      [*Contracted*], [*Expanded*])
+    v(3mm)
+    h((width - first-width) / 2)
+    first
+    h(width - (first-width + second-width) / 2 + 10mm)
+    second
+    h((width - second-width) / 2)
+  })
+}
+```
+
+![Contracted and expanded superatoms from the same source record](package/images/comparison-superatoms.png)
 
 Source data: [RDKit `Sgroups_Abbreviations.mol`](https://github.com/rdkit/rdkit/blob/b421f19c9f564d0cb66148c4e614c59abadf5413/Code/GraphMol/FileParsers/sgroup_test_data/Sgroups_Abbreviations.mol). The bundled copy only normalizes CRLF line endings to LF.
 
@@ -96,20 +178,19 @@ molchemist dump Sgroups_Abbreviations.mol --mode skeletal --fidelity strict --st
 
 These commands use the same benzene, melatonin, and RDKit/ACD Labs records shown above. `inspect` writes semantic JSON; strict fidelity belongs to `dump`.
 
+## Limitations
+
+- Dense structures may overlap in full mode; prefer abbreviated or skeletal mode, or set a larger `config: (atom-sep: ...)` value.
+- User-defined Collections, HILITE members that refer to 3D objects or external R-groups, and unknown future SGroup types are preserved for inspection but do not receive invented default depictions.
+- Automatic annotations do not replace final collision checking for publication figures.
+
+See the manual for the precise support matrix and diagnostic behavior.
+
 ## Documentation
 
 The [complete manual](package/docs/documentation.pdf) contains the API reference, CTfile fidelity tables, sample code with corresponding typeset output, configuration details, and CLI workflows.
 
 Dependency licenses and example-data provenance are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). PubChem data usage is described by the [NCBI Website and Data Usage Policies](https://www.ncbi.nlm.nih.gov/home/about/policies/).
-
-## Current boundaries
-
-- Dense structures may overlap in full mode; prefer abbreviated or skeletal mode, or set a larger `config: (atom-sep: ...)` value.
-- Reaction SMILES/RXN, atom mapping, automatic reaction-center handling, and MOL2 input are planned for a later release.
-- User-defined Collections, non-graph HILITE members, and unknown future SGroup types are preserved for inspection but do not receive invented default depictions.
-- Automatic annotations do not replace final collision checking for publication figures.
-
-See the manual for the precise support matrix and diagnostic behavior.
 
 ## License
 
