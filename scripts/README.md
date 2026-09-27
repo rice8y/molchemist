@@ -29,6 +29,8 @@ bash scripts/build-core-wasm.sh
 
 Use `scripts/build-wasm.sh` with its pinned Emscripten version for C++ changes.
 
+To optimize the existing distributed plugins without rebuilding them, run `just --justfile package/justfile optimize-wasm` from the repository root. This requires Python 3, Cargo, Typst with Alchemist 0.2.0, and Binaryen's `wasm-opt`. The task uses `wasm-opt -Os` with the same WebAssembly features as the build scripts, compares plugin interfaces, generated source, inspection results, error messages and rendered figures, then updates both the Typst and CLI copies. Failed checks leave the original plugins intact; larger optimized files are not installed. These regression checks cover the bundled examples rather than proving equivalence for every possible input.
+
 `python3 scripts/check-rendering.py` checks committed, reviewed figures with Typst 0.15.1 and bundled fonts. Inspect changed images under `target/visual-regression` before running `--accept` to update the baseline. The script compares decoded pixel samples with a small antialiasing tolerance.
 
 ## Documentation comparison figures

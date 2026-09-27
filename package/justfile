@@ -79,5 +79,9 @@ clean:
     echo "Directory $TARGET_DIR does not exist."
   fi
 
+# Optimize both plugins and replace them only after behavior checks pass.
+optimize-wasm:
+  python3 ../scripts/optimize-wasm.py
+
 docs: # Typst 0.14.2
   nix shell github:NixOS/nixpkgs/1412caf7bf9e660f2f962917c14b1ea1c3bc695e#typst -c typst c --root .. docs/documentation.typ

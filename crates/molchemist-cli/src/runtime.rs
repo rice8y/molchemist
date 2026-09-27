@@ -8,6 +8,10 @@ use crate::RenderMode;
 const CORE_WASM: &[u8] = include_bytes!("../wasm/molchemist_plugin.wasm");
 const LAYOUT_WASM: &[u8] = include_bytes!("../wasm/molchemist_smiles_plugin.wasm");
 
+#[cfg(test)]
+#[path = "wasm_optimization_tests.rs"]
+mod optimization_tests;
+
 /// Generates the same Alchemist source as molchemist's Typst plugins.
 pub struct Generator {
     core: Plugin,
