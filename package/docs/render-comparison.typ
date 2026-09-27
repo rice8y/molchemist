@@ -1,0 +1,5 @@
+#set page(width: auto, height: auto, margin: 5mm, fill: white)
+#set text(font: "Libertinus Serif", size: 11pt)
+#let figure = sys.inputs.at("figure")
+#assert(figure in ("layout", "reaction", "superatoms", "rgroups"))
+#include ("examples/" + figure + ".typ")

@@ -30,3 +30,13 @@ bash scripts/build-core-wasm.sh
 Use `scripts/build-wasm.sh` with its pinned Emscripten version for C++ changes.
 
 `python3 scripts/check-rendering.py` checks committed, reviewed figures with Typst 0.15.1 and bundled fonts. Inspect changed images under `target/visual-regression` before running `--accept` to update the baseline. The script compares decoded pixel samples with a small antialiasing tolerance.
+
+## Documentation comparison figures
+
+`package/docs/examples/` contains the executable sources shared by the README comparisons and manual. To regenerate a PNG with Typst 0.15.1 and bundled fonts, run the following command from the repository root; use `reaction`, `superatoms`, or `rgroups` for the other figures. The matching code blocks in both READMEs use the same source, with asset paths relative to each README directory.
+
+```sh
+typst compile --root . --ignore-system-fonts --ppi 192 \
+  --input figure=layout package/docs/render-comparison.typ \
+  package/images/comparison-layout.png
+```
