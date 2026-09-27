@@ -5825,37 +5825,46 @@ mod tests {
 
     #[test]
     fn relayout_recomputes_explicit_wedges_after_reflection() {
-        let mol = include_str!("../../molchemist-cli/tests/fixtures/extended/tetra-3d.mol")
-            .replace("1 1 1 0", "1 0 0 0")
-            .replace("-1 -1 1 0", "0 1 0 0")
-            .replace("-1 1 -1 0", "-1 0 0 0")
-            .replace("1 -1 -1 0", "0 -1 0 0")
-            .replace("M  V30 1 1 1 2\n", "M  V30 1 1 1 2 CFG=1\n");
+        let source = include_str!("../../molchemist-cli/tests/fixtures/extended/tetra-3d.mol")
+            .replace("\r\n", "\n");
         let points = [(0., 0.), (1., 0.), (0., 1.), (-1., 0.), (0., -1.)];
         let reflected = points.map(|(x, y)| (-x, y));
-        let wedges = |points: &[(f32, f32)]| {
-            let ast = sdf_reoriented_ast(
-                &mol,
-                &coordinate_payload(points, 4),
-                RenderMode::Skeletal,
-                1,
-                false,
-            )
-            .unwrap();
-            let commands: Vec<Command> = ciborium::from_reader(ast.as_slice()).unwrap();
-            bond_data(&commands)
-                .into_iter()
-                .map(|(kind, _, _)| kind)
-                .filter(|kind| kind.starts_with("cram-"))
-                .collect::<Vec<_>>()
-        };
-        let before = wedges(&points);
-        let after = wedges(&reflected);
-        assert_eq!(before.len(), 1);
-        assert_eq!(after.len(), 1);
-        assert_ne!(
-            before, after,
-            "An XY reflection must reverse the wedge to preserve the original stereoisomer"
-        );
+        for newline in ["\n", "\r\n"] {
+            let mol = source
+                .replace('\n', newline)
+                .replace("1 1 1 0", "1 0 0 0")
+                .replace("-1 -1 1 0", "0 1 0 0")
+                .replace("-1 1 -1 0", "-1 0 0 0")
+                .replace("1 -1 -1 0", "0 -1 0 0")
+                .replacen("M  V30 1 1 1 2", "M  V30 1 1 1 2 CFG=1", 1);
+            assert!(
+                mol.lines().any(|line| line == "M  V30 1 1 1 2 CFG=1"),
+                "The fixture must contain an explicit wedge with {newline:?} line endings"
+            );
+            let wedges = |points: &[(f32, f32)]| {
+                let ast = sdf_reoriented_ast(
+                    &mol,
+                    &coordinate_payload(points, 4),
+                    RenderMode::Skeletal,
+                    1,
+                    false,
+                )
+                .unwrap();
+                let commands: Vec<Command> = ciborium::from_reader(ast.as_slice()).unwrap();
+                bond_data(&commands)
+                    .into_iter()
+                    .map(|(kind, _, _)| kind)
+                    .filter(|kind| kind.starts_with("cram-"))
+                    .collect::<Vec<_>>()
+            };
+            let before = wedges(&points);
+            let after = wedges(&reflected);
+            assert_eq!(before.len(), 1, "line endings: {newline:?}");
+            assert_eq!(after.len(), 1, "line endings: {newline:?}");
+            assert_ne!(
+                before, after,
+                "An XY reflection must reverse the wedge to preserve the original stereoisomer (line endings: {newline:?})"
+            );
+        }
     }
 }
