@@ -218,6 +218,7 @@ dependencies = [
  "ciborium",
  "sdfrust",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

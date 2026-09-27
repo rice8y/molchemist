@@ -14,8 +14,10 @@ pub use error::*;
 pub use parser::*;
 
 mod engine;
+mod formats;
 mod formatter;
 mod semantic;
+pub use formats::{mol2_to_sdf, parse_reaction, MoleculeInput, ReactionInput};
 
 #[cfg(feature = "native-layout")]
 mod native_layout;
