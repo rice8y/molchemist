@@ -111,7 +111,7 @@ Both rows show 1-bromopropane becoming 1-propanol. Highlighting marks the broken
 The same RGfile supplies both panels: its root structure on the left, and the root plus methoxy/cyano alternatives, numbered attachment symbols, and readable occurrence conditions on the right.
 
 ```typ
-#let data = read("docs/assets/rgroup-alternatives.mol")
+#let data = read("rgroup-alternatives.mol")
 #let groups = inspect-rgroup(data)
 #let root = render-mol(groups.root, skeletal: true)
 #let alternatives = render-rgroup(data)
@@ -131,7 +131,7 @@ The R-group example uses the bundled [synthetic RGfile](docs/assets/rgroup-alter
 This ACD/Labs fixture distributed by RDKit contains two multi-atom `SUP` SGroups. Both panels use the same record: the default contracts them to `NO₂` and `COOH`, while `sgroups: "expanded"` displays their atoms and bonds, including the hydroxyl H inferred from ordinary valence. The two views share a scaffold baseline. `inspect-mol` retains the source semantics in either case.
 
 ```typ
-#let data = read("docs/assets/Sgroups_Abbreviations.mol")
+#let data = read("Sgroups_Abbreviations.mol")
 #context {
   let first = render-mol(data, skeletal: true, fidelity: "strict",
     config: (baseline-atom: "a0"))
