@@ -4,8 +4,6 @@ mod runtime;
 
 pub use runtime::Generator;
 
-pub const DEFAULT_ALCHEMIST_IMPORT: &str = "@preview/alchemist:0.2.0";
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RenderMode {
     #[default]
@@ -26,14 +24,12 @@ impl RenderMode {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StandaloneOptions {
-    pub alchemist_import: String,
     pub page_margin: String,
 }
 
 impl Default for StandaloneOptions {
     fn default() -> Self {
         Self {
-            alchemist_import: DEFAULT_ALCHEMIST_IMPORT.to_string(),
             page_margin: "3mm".to_string(),
         }
     }
@@ -41,10 +37,8 @@ impl Default for StandaloneOptions {
 
 pub fn format_standalone_code(code: &str, options: &StandaloneOptions) -> String {
     format!(
-        "#import \"{}\": *\n\n#set page(width: auto, height: auto, margin: {})\n\n{}",
-        escape_typst_string(&options.alchemist_import),
-        options.page_margin,
-        code,
+        "#set page(width: auto, height: auto, margin: {})\n\n{}",
+        options.page_margin, code,
     )
 }
 
@@ -62,11 +56,9 @@ mod tests {
 
     #[test]
     fn standalone_wrapper_preserves_generated_source() {
-        let source = "#skeletize({\n  fragment(\"O\")\n})";
+        let source = "#let _scene = ()\n#_render-graphic(_scene, 3em)";
         let document = format_standalone_code(source, &StandaloneOptions::default());
-        assert!(document.starts_with(
-            "#import \"@preview/alchemist:0.2.0\": *\n\n#set page(width: auto, height: auto, margin: 3mm)\n\n"
-        ));
+        assert!(document.starts_with("#set page(width: auto, height: auto, margin: 3mm)\n\n"));
         assert!(document.ends_with(source));
     }
 }

@@ -7,12 +7,12 @@ use molchemist_cli::{Generator, RenderMode};
 #[test]
 #[ignore = "requires Typst and the embedded WASM modules"]
 fn typst_and_cli_outputs_match_exactly() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let output = Command::new("typst")
         .current_dir(&root)
         .args([
             "query",
-            "tests/fixtures/typst-parity.typ",
+            "crates/molchemist-cli/tests/fixtures/typst-parity.typ",
             "<parity>",
             "--field",
             "value",
@@ -62,13 +62,13 @@ fn typst_and_cli_outputs_match_exactly() {
     let mut generator = Generator::new().unwrap();
     let sdf = include_str!("fixtures/Structure2D_COMPOUND_CID_241.sdf");
     let cli = generator
-        .sdf_to_code(sdf, RenderMode::Abbreviate, "3em", 2)
+        .sdf_to_code(sdf, RenderMode::Abbreviate, "3em")
         .unwrap();
     assert_eq!(wasm.get("sdf").unwrap(), &cli, "SDF parity failed");
 
     let bond_semantics = include_str!("fixtures/bond-semantics.sdf");
     let cli = generator
-        .sdf_to_code(bond_semantics, RenderMode::Full, "3em", 2)
+        .sdf_to_code(bond_semantics, RenderMode::Full, "3em")
         .unwrap();
     assert_eq!(
         wasm.get("bond-semantics").unwrap(),
@@ -78,7 +78,7 @@ fn typst_and_cli_outputs_match_exactly() {
 
     let stereochemistry = include_str!("fixtures/stereochemistry.sdf");
     let cli = generator
-        .sdf_to_code(stereochemistry, RenderMode::Skeletal, "3em", 2)
+        .sdf_to_code(stereochemistry, RenderMode::Skeletal, "3em")
         .unwrap();
     assert_eq!(
         wasm.get("stereochemistry").unwrap(),
@@ -88,7 +88,7 @@ fn typst_and_cli_outputs_match_exactly() {
 
     let collapsed_sdf = include_str!("fixtures/layout-robustness.sdf");
     let cli = generator
-        .sdf_to_code(collapsed_sdf, RenderMode::Skeletal, "3em", 2)
+        .sdf_to_code(collapsed_sdf, RenderMode::Skeletal, "3em")
         .unwrap();
     assert_eq!(
         wasm.get("collapsed-sdf").unwrap(),
@@ -98,7 +98,7 @@ fn typst_and_cli_outputs_match_exactly() {
 
     let ctfile = include_str!("fixtures/ctfile-fidelity.sdf");
     let cli = generator
-        .sdf_to_code(ctfile, RenderMode::Full, "3em", 2)
+        .sdf_to_code(ctfile, RenderMode::Full, "3em")
         .unwrap();
     assert_eq!(
         wasm.get("ctfile-fidelity").unwrap(),
@@ -107,7 +107,7 @@ fn typst_and_cli_outputs_match_exactly() {
     );
 
     for (name, smiles, mode) in cases {
-        let cli = generator.smiles_to_code(smiles, mode, "3em", 2).unwrap();
+        let cli = generator.smiles_to_code(smiles, mode, "3em").unwrap();
         assert_eq!(wasm.get(name).unwrap(), &cli, "parity failed for {name}");
     }
 }
@@ -147,7 +147,7 @@ fn first_hundred_pubchem_compounds_match_exactly() {
         let cid = compound["CID"].as_u64().unwrap().to_string();
         let smiles = compound["SMILES"].as_str().unwrap();
         let cli = generator
-            .smiles_to_code(smiles, RenderMode::Abbreviate, "3em", 2)
+            .smiles_to_code(smiles, RenderMode::Abbreviate, "3em")
             .unwrap();
         if let Some(wasm) = wasm.get(&cid) {
             if wasm != &cli {

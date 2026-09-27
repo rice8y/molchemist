@@ -39,10 +39,7 @@ pub use engine::{
     CtfileHighlightBond, CtfileHighlightDepiction, CtfilePoint, CtfileSGroupDepiction,
     CtfileVariableAttachmentDepiction, LinkData, RenderMode,
 };
-pub use formatter::{
-    format_alchemist, format_standalone, format_standalone_code, StandaloneOptions,
-    DEFAULT_ALCHEMIST_IMPORT,
-};
+pub use formatter::{composition_code, format_coordinate_code};
 pub use semantic::{
     ChemicalAtom, ChemicalAtomQuery, ChemicalBond, ChemicalBondOrder, ChemicalBondStereo,
     ChemicalCollection, ChemicalFormat, ChemicalLinkNode, ChemicalLinkNodeConnection,

@@ -226,6 +226,7 @@ dependencies = [
 name = "molchemist_plugin"
 version = "0.1.2"
 dependencies = [
+ "ciborium",
  "molchemist-core",
  "wasm-minimal-protocol",
 ]
