@@ -4,7 +4,7 @@ set -euo pipefail
 typage_version="${TYPAGE_VERSION:-0.2.1}"
 starter_version="${TYPST_DOCS_STARTER_VERSION:-0.1.4}"
 starter="${TYPST_DOCS_STARTER:-github:rice8y/typage-starter-typst-docs#v${starter_version}}"
-docs_root="${TYPAGE_DOCS_ROOT:-molfig-docs}"
+docs_root="${TYPAGE_DOCS_ROOT:-molchemist-docs}"
 
 case "$docs_root" in
   "" | "." | "/" | /* | *".."*)
